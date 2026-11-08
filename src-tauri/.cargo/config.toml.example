@@ -1,0 +1,15 @@
+# 把本文件复制为 config.toml（同一目录）后生效；config.toml 已被 .gitignore 排除。
+#
+# 作用：`cargo run` / `pnpm tauri dev` 跑的是 target/debug 或 target/release 里的产物，
+# exe 默认把自己的目录当数据目录，于是会在那里另建一份 state\，看不到平时用的配置与 CA。
+# 这里用 [env] 把 VPN_HOME 钉回项目根：
+#
+#   relative = true → 相对「.cargo 目录的上两级」        即 desktop/src-tauri/../..
+#   "../.."         → 仓库根目录
+#
+# Cargo 不会覆盖你已经手动设置过的 VPN_HOME，所以临时想换目录时直接：
+#   $env:VPN_HOME='D:\tmp\vpn'; pnpm tauri dev
+# 会以手动值为准。
+
+[env]
+VPN_HOME = { value = "../..", relative = true }

@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SDUST WebVPN 本地代理</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">VPN</div>
+        <div class="titles">
+          <h1>SDUST WebVPN 本地代理</h1>
+          <p class="sub">像用翻墙软件上外网一样无感：浏览器、git、pip、npm 直接用校内原始地址</p>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="pills">
+          <span id="core-pill" class="pill grey">核心未启动</span>
+          <span id="login-pill" class="pill grey">未登录</span>
+          <span id="proxy-pill" class="pill grey">系统代理：关</span>
+        </div>
+        <button id="btn-help" class="icon-btn" title="使用说明" aria-label="使用说明">?</button>
+        <button id="btn-theme" class="icon-btn" title="切换主题（自动 / 浅色 / 深色）" aria-label="切换主题">◐</button>
+      </div>
+    </header>
+
+    <div class="alert" id="state-banner" hidden>
+      <b>会话已失效</b>
+      <span id="state-banner-msg"></span>
+      <span class="alert-note">
+        <span id="state-banner-note">代理还在运行，但校内请求会被踢回登录页。</span>
+        <button id="state-banner-retry" class="small">重新登录</button>
+      </span>
+    </div>
+
+    <div class="alert" id="notice-banner" hidden>
+      <b>提示</b>
+      <span id="notice-banner-msg"></span>
+      <span class="alert-note">
+        <button id="notice-banner-x" class="small">知道了</button>
+      </span>
+    </div>
+
+    <main>
+      <div class="col col-main">
+        <section class="card">
+          <div class="card-head">
+            <h2>连接</h2>
+            <span class="tag" id="conn-tag">未运行</span>
+          </div>
+
+          <div class="row between card-actions">
+            <button id="btn-sysproxy" disabled>开启系统代理</button>
+            <span class="action-group">
+              <button id="btn-check" class="ghost small-btn"
+                title="状态检查（账号 / 核心 / 本地代理 / 系统代理 / 根证书 / 学校服务器）">状态检查</button>
+              <button id="btn-portal" class="ghost small-btn"
+                title="校内导航（内置的校内资源清单）">校内导航</button>
+            </span>
+          </div>
+          <p class="hint" id="sysproxy-hint">核心待命</p>
+
+          <div class="grid2">
+            <label class="field" for="in-mode">
+              <span>模式</span>
+              <select id="in-mode">
+                <option value="pac" selected>PAC — 按名单分流（默认）</option>
+                <option value="global">全局 — 全部走 WebVPN</option>
+              </select>
+            </label>
+            <label class="field" for="in-port">
+              <span>本地端口</span>
+              <input id="in-port" type="number" min="1024" max="65535" step="1" value="8899" />
+            </label>
+          </div>
+
+          <div class="divider"></div>
+          <div class="checks">
+            <label class="check">
+              <input id="in-autostart" type="checkbox" />
+              <span>开机自启（静默到托盘）</span>
+            </label>
+            <label class="check">
+              <input id="in-envproxy" type="checkbox" />
+              <span>同时设置命令行代理环境变量</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>分流规则</h2>
+            <span class="tip-wrap">
+              <button id="rules-tip" class="dot-warn" type="button"
+                aria-label="分流规则说明" aria-describedby="rules-tip-text">!</button>
+              <span class="tip-bubble" id="rules-tip-text" role="tooltip">
+                当前默认规则覆盖 <code>sdust.edu.cn</code>、几个内网地址段，以及校内导航里那几个
+                校外资费资源（知网、超星电子书、国研网）。实际使用中，各校内站点、局域网服务、
+                学术数据库应走 WebVPN 还是直连，往往需要试用后逐个确认，并把结论补进下面两个名单
+                （黑名单优先）。后续计划支持从线上加载公共规则，届时无需手工维护。
+              </span>
+            </span>
+            <span class="tag" id="rules-mode-badge">按名单分流</span>
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label for="in-proxy-hosts">白名单 · 走 WebVPN</label>
+              <textarea id="in-proxy-hosts" rows="3" spellcheck="false"
+                placeholder="sdust.edu.cn&#10;10.0.0.0/8"></textarea>
+            </div>
+            <div class="field">
+              <label for="in-direct-hosts">黑名单 · 直连（优先）</label>
+              <textarea id="in-direct-hosts" rows="3" spellcheck="false"
+                placeholder="www.baidu.com&#10;8.8.8.8/32"></textarea>
+            </div>
+          </div>
+          <p class="hint muted">
+            <code>sdust.edu.cn</code> 含子域 · <code>10.0.0.0/8</code> 网段 · <code>*</code> 全部 ·
+            <span id="rules-mode-note"></span>
+          </p>
+
+          <div class="row between save-row card-foot">
+            <div class="action-group">
+              <button id="btn-save" class="primary">保存</button>
+              <button id="btn-reset" class="ghost" hidden>放弃修改</button>
+              <span class="tag warn" id="dirty-hint" hidden>未保存</span>
+            </div>
+            <div class="action-group">
+              <span class="muted small">在线规则</span>
+              <span class="tag" id="online-badge">未启用</span>
+              <span class="muted small" id="online-meta"></span>
+              <button id="btn-online-open" class="ghost small-btn">在线规则…</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card" id="card-account">
+          <div class="card-head">
+            <h2>账号与证书</h2>
+            <span class="tag" id="acct-tag">未登录</span>
+          </div>
+          <div class="alert" id="login-error-banner" hidden>
+            <b>登录失败</b>
+            <span id="login-error-banner-msg"></span>
+            <span class="alert-note" id="login-error-banner-note"></span>
+          </div>
+          <div class="grid2">
+            <label class="field" for="in-user">
+              <span>职工号 / 学号 / 邮箱 / 别名</span>
+              <input id="in-user" type="text" autocomplete="username" placeholder="统一身份认证账号" />
+            </label>
+            <label class="field" for="in-pass">
+              <span>密码</span>
+              <input id="in-pass" type="password" autocomplete="current-password" placeholder="请输入密码" />
+            </label>
+          </div>
+          <p class="hint muted">密码用 Windows DPAPI 加密保存在本机，仅当前用户可解密。</p>
+          <div class="row between card-foot">
+            <div class="action-group">
+              <button id="btn-save-creds" class="primary" disabled>保存并登录</button>
+              <button id="btn-logout" class="ghost" disabled
+                title="删掉本机保存的账号密码和当前登录态，下次要重新填">清除本机账号</button>
+            </div>
+            <p class="hint muted" id="acct-who"></p>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="row between">
+            <span class="hint" id="ca-hint">HTTPS 透明转发需要本机信任此证书</span>
+            <span class="row">
+              <span class="tag" id="ca-tag">未安装</span>
+              <button id="btn-ca">安装</button>
+            </span>
+          </div>
+        </section>
+      </div>
+
+      <div class="col col-side">
+        <section class="card">
+          <div class="stats">
+            <div><b id="st-school">0</b><span>经 WebVPN</span></div>
+            <div><b id="st-direct">0</b><span>直连</span></div>
+            <div><b id="st-rewrite">0</b><span>改写</span></div>
+            <div><b id="st-error">0</b><span>错误</span></div>
+          </div>
+        </section>
+
+        <section class="card logs">
+          <div class="card-head">
+            <h2>日志</h2>
+            <div class="log-tools">
+              <button id="btn-log-copy" class="ghost small">复制</button>
+              <button id="btn-log-clear" class="ghost small">清空</button>
+            </div>
+          </div>
+          <pre id="log"></pre>
+        </section>
+
+        <section class="card note">
+          <div class="card-head">
+            <h2>说明</h2>
+            <button id="btn-about" class="link-btn" title="关于本程序与版本日志">关于</button>
+          </div>
+          <ul>
+            <li>仅本机可用，代理只监听 <code>127.0.0.1</code>。</li>
+            <li>只支持 HTTP / HTTPS；SSH、MySQL、RDP 等走不了。</li>
+            <li>点 X 隐藏到托盘；停核心或退出会自动还原系统代理。</li>
+          </ul>
+          <p class="muted small">数据目录：<span id="data-root"></span></p>
+          <p class="muted small">版本 <span id="app-version">—</span></p>
+        </section>
+      </div>
+    </main>
+
+    <!-- 首次使用引导 -->
+    <div id="guide" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+        <div class="modal-head">
+          <h3 id="guide-title">首次使用 · 两步开始</h3>
+          <button id="guide-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <ol class="steps">
+            <li>
+              <b>登录统一身份认证</b>
+              <span>在下方「账号与证书」里填<strong>账号</strong>与<strong>密码</strong>，点「保存并登录」。
+                密码用 Windows DPAPI 加密保存在本机，只需填一次，登录态之后自动续期。</span>
+            </li>
+            <li>
+              <b>开启系统代理</b>
+              <span>填完账号点「保存并登录」，再点「开启系统代理」。
+                核心（本地代理 <code>127.0.0.1:8899</code>）是<strong>随程序自动启动</strong>的，不用手动开；
+                真正动你网络设置的是「开启系统代理」这一步，点它的时候如果有还没做的事
+                （装根证书、系统代理被别的软件占着），会先问一句。</span>
+            </li>
+          </ol>
+          <p class="modal-note">
+            证书没装的时候，第一次点「开启系统代理」会提示装一次（HTTPS 透明转发必需，装不装都能先用）。
+            之后浏览器、git、pip、npm 直接用校内原始地址（如 <code>https://my.sdust.edu.cn</code>）即可，
+            不用再打开 webvpn 门户。模式（全局 / PAC）和黑白名单在「分流规则」里改。
+          </p>
+          <p class="modal-note muted small">
+            点窗口 X 只是隐藏到托盘（程序继续在后台跑）；托盘「退出」才会停核心并自动还原系统代理。
+          </p>
+          <div class="modal-aside">
+            <b>关于：和翻墙软件的冲突</b>
+            <span>
+              本程序靠 Windows 的<strong>系统代理</strong>这个开关工作；翻墙软件（Clash、v2rayN 等）的
+              「系统代理」模式会抢同一个开关，谁后写谁生效，校内网站就会打不开或者登录失败。
+            </span>
+            <span>
+              要用翻墙软件，请切到它的 <strong>TUN / 虚拟网卡模式</strong>，并把
+              <code>*.sdust.edu.cn</code> 与学校地址段设为<strong>直连（DIRECT）</strong>，
+              否则统一身份认证容易出验证码甚至直接失败。
+            </span>
+            <span>拿不准就点「连接」卡里的 <strong>状态检查</strong>，看一眼现在是谁占着系统代理。</span>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <label class="check modal-check">
+            <input id="guide-no-again" type="checkbox" checked />
+            <span>不再显示</span>
+          </label>
+          <button id="guide-ok" class="primary">我知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 登录提示 -->
+    <div id="login-prompt" class="overlay" hidden>
+      <div class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="login-prompt-title">
+        <div class="modal-head">
+          <h3 id="login-prompt-title">还没登录统一身份认证</h3>
+          <button id="login-prompt-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-note">
+            校内资源需要登录后才能访问。请在「账号与证书」里填写<strong>账号</strong>与<strong>密码</strong>，
+            点「保存并登录」。
+          </p>
+          <p class="modal-note muted small">
+            登录不依赖核心：核心是随程序自动跑的，先登录，再点「开启系统代理」。密码仅以 DPAPI 密文保存在本机。
+          </p>
+        </div>
+        <div class="modal-foot">
+          <button id="login-prompt-later" class="ghost">稍后再说</button>
+          <button id="login-prompt-go" class="primary">去填写</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 安装根证书提示（单独弹一次） -->
+    <div id="ca-prompt" class="overlay" hidden>
+      <div class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="ca-prompt-title">
+        <div class="modal-head">
+          <h3 id="ca-prompt-title">还差一步：装一次根证书</h3>
+          <button id="ca-prompt-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-err" id="ca-prompt-err" hidden></p>
+          <p class="modal-note">
+            用网页访问 <code>https://…</code> 的校内站点时，本机要先信任一张本地根证书，HTTPS 才能透明转发。
+            没装之前，浏览器会直接报「您的连接不是私密连接 / 证书不受信任」。
+          </p>
+          <ol class="steps">
+            <li>
+              <b>点下面的「立即安装」</b>
+              <span>Windows 会弹一次确认框，点「是」即可，不用改任何设置。</span>
+            </li>
+            <li>
+              <b>装完就能用了</b>
+              <span>只需一次。以后想撤销，在「账号与证书」里点「卸载」。</span>
+            </li>
+          </ol>
+          <p class="modal-note muted small">
+            证书只装进<strong>当前用户</strong>的「受信任的根证书颁发机构」，不写系统级证书库，
+            也不需要管理员权限。
+          </p>
+        </div>
+        <div class="modal-foot">
+          <label class="check modal-check">
+            <input id="ca-prompt-no-again" type="checkbox" />
+            <span>不再提示</span>
+          </label>
+          <button id="ca-prompt-later" class="ghost">稍后</button>
+          <button id="ca-prompt-install" class="primary">立即安装</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 登录失败 -->
+    <div id="login-fail" class="overlay" hidden>
+      <div class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="login-fail-title">
+        <div class="modal-head">
+          <h3 id="login-fail-title">登录失败</h3>
+          <button id="login-fail-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-err" id="login-fail-msg"></p>
+          <p class="modal-note">最常见的原因：</p>
+          <ul class="modal-list">
+            <li><b>账号或密码写错了</b> —— 注意大小写、中英文输入法和多余空格。</li>
+            <li><b>密码已过期</b> —— 学校要求定期改密，去统一认证改完再填一次。</li>
+            <li><b>需要验证码</b> —— 连续失败或异地登录时，统一认证会要求验证码，先在浏览器里登录一次即可。</li>
+          </ul>
+          <p class="modal-note muted small" id="login-fail-note"></p>
+        </div>
+        <div class="modal-foot">
+          <button id="login-fail-later" class="ghost">稍后再说</button>
+          <button id="login-fail-go" class="primary">去修改密码</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 核心没起来时（不是登录问题）的详细说明 -->
+    <div id="start-fail" class="overlay" hidden>
+      <div class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="start-fail-title">
+        <div class="modal-head">
+          <h3 id="start-fail-title">核心没能启动</h3>
+          <button id="start-fail-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-err" id="start-fail-msg"></p>
+          <p class="modal-note">常见原因：</p>
+          <ul class="modal-list">
+            <li><b>代理端口被占用</b> —— 换一个端口（连接卡片里的「代理端口」）再点保存。</li>
+            <li><b>系统代理改不动</b> —— 可能被安全软件或组策略锁住了，可以先手动关掉系统代理再试。</li>
+            <li><b>本机还有另一个副本在运行</b> —— 控制端口 8897 是固定的，同一时间只能有一个。</li>
+          </ul>
+          <p class="modal-note muted small">详细原因在右侧的日志里也有一条。</p>
+        </div>
+        <div class="modal-foot">
+          <button id="start-fail-ok" class="primary">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 清除本机账号前确认一次（会删掉保存的账号密码） -->
+    <div id="forget-confirm" class="overlay" hidden>
+      <div class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="forget-confirm-title">
+        <div class="modal-head">
+          <h3 id="forget-confirm-title">清除本机账号？</h3>
+          <button id="forget-confirm-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-note">会做这三件事：</p>
+          <ul class="modal-list">
+            <li><b>删掉本机保存的账号密码</b> —— `.secrets` 里那份 Windows 加密存储的凭据。</li>
+            <li><b>清掉当前登录态</b> —— 下次访问校内站点要重新登录。</li>
+            <li><b>停掉核心并还原系统代理</b> —— 如果它正在运行。</li>
+          </ul>
+          <p class="modal-note muted small">根证书不受影响。清完之后重新填账号密码、点「保存并登录」就能继续用。</p>
+        </div>
+        <div class="modal-foot">
+          <button id="forget-confirm-cancel" class="ghost">取消</button>
+          <button id="forget-confirm-ok" class="danger">确定清除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 接管系统代理前，发现已经被别的程序占用就问一句 -->
+    <div id="proxy-conflict" class="overlay" hidden>
+      <div class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="proxy-conflict-title">
+        <div class="modal-head">
+          <h3 id="proxy-conflict-title">系统代理正被别的程序占用</h3>
+          <button id="proxy-conflict-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-note">
+            检测到系统代理已经指向 <code id="proxy-conflict-where"></code>（通常是翻墙软件的系统代理模式）。
+          </p>
+          <p class="modal-note">继续接管会把它顶掉；本程序「关闭系统代理」或退出时会还原成现在这样。</p>
+          <p class="modal-note muted small">
+            在用翻墙软件的 TUN / 虚拟网卡模式？那直接继续就行。如果是它的「系统代理」模式，
+            两个会互相顶，建议只留一个。
+          </p>
+        </div>
+        <div class="modal-foot">
+          <button id="proxy-conflict-cancel" class="ghost">先不动</button>
+          <button id="proxy-conflict-ok" class="primary">继续接管</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 状态检查（体检报告） -->
+    <div id="doctor" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="doctor-title">
+        <div class="modal-head">
+          <h3 id="doctor-title">状态检查</h3>
+          <button id="doctor-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-note" id="doctor-sum">正在检查…</p>
+          <div class="checks" id="doctor-list"></div>
+          <p class="modal-note muted small">
+            检查会真的发请求：账号走一次校内接口，核心借本机代理访问一次学校首页（只读），
+            所以要等几秒。结果会同步到顶栏的状态灯。
+          </p>
+        </div>
+        <div class="modal-foot">
+          <button id="doctor-again" class="ghost">再查一次</button>
+          <button id="doctor-ok" class="primary">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 关于 -->
+    <div id="about" class="overlay" hidden>
+      <div class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="about-title">
+        <div class="modal-head">
+          <h3 id="about-title">关于 SDUST WebVPN</h3>
+          <button id="about-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-note">
+            本机透明代理：把校内站点（<code>*.sdust.edu.cn</code>、校内网段等）的请求改写成学校 WebVPN 的地址，
+            浏览器、git、pip、npm 直接用校内原始地址即可，不用再打开 webvpn 门户。
+            代理只监听本机 <code>127.0.0.1</code>。
+          </p>
+          <ul class="modal-list">
+            <li><b>版本</b> <span id="about-version">—</span>（程序文件 <span id="about-built">—</span>）</li>
+            <li><b>控制接口</b> <code>http://127.0.0.1:<span id="about-port">8897</span></code></li>
+            <li><b>数据目录</b> <span id="about-root">—</span></li>
+            <li><b>运行日志</b> <code>state\core.log</code>（界面右下「日志」里也能看）</li>
+          </ul>
+          <p class="modal-note muted small">
+            账号密码用 Windows DPAPI 加密保存在本机，只在登录统一身份认证时使用；
+            根证书装在本机才需要，卸载在「账号与证书」卡片里。
+          </p>
+        </div>
+        <div class="modal-foot">
+          <button id="about-changelog" class="ghost">版本日志</button>
+          <button id="about-ok" class="primary">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 版本日志 -->
+    <div id="changelog" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="changelog-title">
+        <div class="modal-head">
+          <h3 id="changelog-title">版本日志</h3>
+          <button id="changelog-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="changelog">
+            <section>
+              <h4>v0.3.0 <span class="muted small">2026-11-01</span></h4>
+              <ul>
+                <li><b>在线分流规则</b>：填一个规则文件网址（JSON，或 <code>[proxy]</code>/<code>[direct]</code> 分段文本），
+                  拉下来的条目排在本地名单前面，本地黑名单依旧优先；可切「在线 + 本地」或「只用本地」。
+                  配置放在「在线规则…」弹窗里，主页面只留一行状态</li>
+                <li>在线规则支持定期自动同步（关闭 / 每 6 小时 / 每天 / 每周），同步失败保留上一次成功的规则，离线也能用</li>
+                <li><b>校内导航</b>：内置一份校内站点清单（32 条，来自学校门户的资源清单，见 <code>ui/sites.js</code>，
+                  可自行增删），用的都是各站点的原始地址。先开启系统代理，再在弹窗里找要去的站点：
+                  每条有「打开」（默认浏览器）和「复制」（复制网址），一行两个。入口在「连接」卡右上角的「校内导航」，占一个弹窗，不挤主页面</li>
+                <li>账号称谓对齐统一身份认证：字段叫「职工号 / 学号 / 邮箱 / 别名」，通篇简称「账号」</li>
+                <li>默认白名单补上校内导航里的校外资费资源（知网、超星电子书、国研网），老配置升级时只往里加、不覆盖你自己加的</li>
+                <li>点「打开」改用 Windows 的 ShellExecuteW，不再经过 cmd，不会闪一下黑框</li>
+                <li><b>按钮位置统一</b>：「状态检查」「校内导航」从顶栏挪进「连接」卡，和「开启系统代理」同一行靠右；
+                  其余卡片统一成「内容在上、一条虚线操作行在下」（左＝操作按钮、主按钮在前，右＝只读状态），
+                  卡片头右侧只放「复制 / 清空 / 关于」这类工具按钮</li>
+                <li>版本号 0.2.0 → 0.3.0</li>
+              </ul>
+            </section>
+            <section>
+              <h4>v0.2.0 <span class="muted small">2026-10-31</span></h4>
+              <ul>
+                <li>核心改成随程序无感启动 / 停止：界面上没有「启动核心」按钮了，退出程序自动停核心并还原系统代理</li>
+                <li>系统代理改成按需手动接管（去掉「启动核心时自动接管」勾选框），<b>默认 PAC 模式</b></li>
+                <li>点「开启系统代理」时按序提示：先登录 → 装一次根证书（可「稍后 3 天」）→ 与占用系统代理的程序确认冲突</li>
+                <li>新增顶栏 <b>◎ 状态检查</b>：账号 / 核心 / 系统代理 / 根证书 / 学校服务器直连 / 穿透测试，逐条给结论和修法</li>
+                <li>登录失败会明确说原因（红色横幅 + 弹窗）；失败不再顶掉原来能用的会话，也不会把填错的密码存到本机</li>
+                <li>顶栏「系统代理」灯分三态：已接管 / 被别的程序占用（显示对方地址）/ 未接管</li>
+                <li>新增「清除本机账号」：连本机保存的账号密码一起删掉</li>
+                <li>保活连续失败 3 次就暂停自动重登，免得把统一认证刷出验证码</li>
+                <li>数据目录始终跟着 exe 走：换个文件夹就是全新配置（真便携）</li>
+                <li>标题下面那句副标题改成一句话：「像用翻墙软件上外网一样无感：浏览器、git、pip、npm 直接用校内原始地址」</li>
+                <li>新增「关于」弹窗和这份版本日志</li>
+                <li>「分流规则」标题紧跟一个红色感叹号（模式徽标移到卡片最右）：悬停说明默认规则只覆盖校内主域和少数内网网段，其余要按实际使用情况自行确认</li>
+                <li>程序图标换成蓝色圆底 + 白色盾牌（盾中一个钥匙孔，外侧透明），窗口、任务栏、托盘一起换</li>
+                <li>「关于」里写的运行日志 <code>state\core.log</code> 现在真的会写下来了（超过 512 KB 只留最后 500 行）</li>
+              </ul>
+            </section>
+            <section>
+              <h4>v0.1.0 <span class="muted small">2026-10-19</span></h4>
+              <ul>
+                <li>首个版本：本机 HTTP / HTTPS 透明代理，把校内地址自动改写成学校 WebVPN 形式，浏览器 / git / pip / npm 直接用校内原始地址</li>
+                <li>统一身份认证登录，密码用 Windows DPAPI 加密保存在本机，登录态自动续期</li>
+                <li>根证书一键安装 / 卸载；全局与 PAC 两种接管模式、黑白名单分流</li>
+                <li>接管系统代理前自动备份原设置，停止或退出时还原</li>
+                <li>托盘常驻（点 X 隐藏到托盘）、开机自启、运行日志面板</li>
+              </ul>
+            </section>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button id="changelog-ok" class="primary">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 在校内导航之前：校内导航弹窗 -->
+    <div id="portal" class="overlay" hidden>
+      <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="portal-title">
+        <div class="modal-head">
+          <h3 id="portal-title">校内导航</h3>
+          <span class="tag" id="portal-badge">32 个站点</span>
+          <span class="spacer"></span>
+          <input id="in-portal-search" type="search" class="portal-search" spellcheck="false"
+            placeholder="搜索站点" aria-label="搜索站点" />
+          <button id="portal-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="hint muted" id="portal-note">
+            内置一份校内站点清单，用的都是各站点的<strong>原始地址</strong>。先点「开启系统代理」接管，再在这里找要去的站点：点「打开」用默认浏览器开，点「复制」拿到网址自己粘贴。打不开多半是该域名没进分流名单，把域名补进白名单即可。
+          </p>
+          <div id="portal-list" class="portal-list">
+            <p class="muted small empty-hint">正在加载站点…</p>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button id="portal-ok" class="primary">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 在线分流规则 -->
+    <div id="online-modal" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="online-title">
+        <div class="modal-head">
+          <h3 id="online-title">在线分流规则</h3>
+          <span class="tag" id="online-modal-badge">未启用</span>
+          <span class="spacer"></span>
+          <button id="online-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="row">
+            <input id="in-online-url" type="url" spellcheck="false" autocomplete="off"
+              placeholder="https://example.com/sdust-rules.json" aria-label="规则文件网址" />
+            <button id="btn-online-sync" class="ghost">立即同步</button>
+          </div>
+          <div class="row wrap online-opts">
+            <label class="radio"><input type="radio" name="rule-source" id="src-online" value="online" /> 在线 + 本地合并</label>
+            <label class="radio"><input type="radio" name="rule-source" id="src-local" value="local" /> 只用本地名单</label>
+            <label class="radio inline-gap">
+              <span class="muted">自动同步</span>
+              <select id="in-online-interval">
+                <option value="0">关闭</option>
+                <option value="6">每 6 小时</option>
+                <option value="24">每天</option>
+                <option value="168">每周</option>
+              </select>
+            </label>
+            <button id="btn-online-clear" class="ghost small-btn" hidden>清除缓存</button>
+          </div>
+          <p class="hint muted" id="online-note">
+            填一个规则文件的网址（JSON 或 <code>[proxy]</code>/<code>[direct]</code> 分段文本都行），
+            拉下来的条目排在本地名单前面，本地黑名单仍然优先。自动同步按上面的间隔在后台进行，
+            失败会保留上一次成功的规则。
+          </p>
+          <p class="hint muted" id="online-modal-meta"></p>
+        </div>
+        <div class="modal-foot">
+          <button id="online-ok" class="primary">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="sites.js"></script>
+  <script src="main.js"></script>
+  </body>
+</html>

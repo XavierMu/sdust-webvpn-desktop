@@ -1,0 +1,14 @@
+{
+  "name": "sdust-webvpn-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "山科大 WebVPN 本地透明代理桌面端",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  }
+}

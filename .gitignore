@@ -1,0 +1,30 @@
+# 依赖与体积
+node_modules/
+.pnpm-store/
+
+# Rust 构建产物（cargo 产物可能 10 GB+，绝不入库）
+target/
+# Tauri 构建期自动生成的 schema
+src-tauri/gen/
+
+# 运行时数据：账号、Cookie、CA 私钥、日志（便携规则下建在 exe 旁边）
+.secrets/
+state/
+*.dpapi
+cookies.json
+core.log
+
+# 本机私有配置（模板见 src-tauri/.cargo/config.toml.example）
+src-tauri/.cargo/config.toml
+
+# 编辑器 / 操作系统
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 杂项
+*.log
+tmp/
