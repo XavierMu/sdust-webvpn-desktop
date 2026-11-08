@@ -28,3 +28,6 @@ desktop.ini
 # 杂项
 *.log
 tmp/
+
+# 便携包产物（用 scripts/build-portable.ps1 生成后上传到 Releases，不入库）
+dist/

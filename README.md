@@ -35,6 +35,8 @@
 ## 特性
 
 - **透明代理** —— 白名单命中走 WebVPN，其余直连；`PAC` / 全局两种模式
+- **浏览器开箱即用** —— 浏览器读 Windows 系统代理；命令行工具可额外接管
+  `HTTP_PROXY` / `HTTPS_PROXY` 环境变量（需手动勾选，且仅全局模式）
 - **完整协议改写** —— HTML 链接、CSS/JS 里的绝对地址、`Location`、`Set-Cookie`、
   CSP 头，以及门户注入函数（`vpn_eval` / `vpn_get_obj` / `vpn_set_obj` / `vpn_call_fn`）
   的兼容层
@@ -52,16 +54,68 @@
 
 ## 能力边界
 
-| ✅ 能用（HTTP/HTTPS） | ❌ 用不了（原生 TCP） |
-| --- | --- |
-| 浏览器访问 `http(s)://xxx.sdust.edu.cn`、校内 IP 站点 | SSH / SFTP |
-| `git clone https://...`（学校 GitLab 等） | MySQL / PostgreSQL / Redis |
-| `pip` / `npm` / `conda` / `maven` 校内源 | RDP / VNC |
-| `curl` / `wget` / 下载器（HTTP） | FTP / BT / 其它私有 TCP 协议 |
-| Python `requests`、Node `fetch` 等 | VS Code Remote-SSH、JetBrains Gateway |
+能透明转发的只有 **HTTP / HTTPS**。按「谁在读代理设置」分三类：
 
-原因：WebVPN 是 **clientless 反向代理**，所有协议都封装在 443 的 HTTP 里，没有 TCP 隧道。
-SSH/MySQL/RDP 这些只能走学校提供的网页终端/网页工具。
+### ① 开箱即用 —— 浏览器
+
+浏览器自动读 Windows 系统代理，勾上「开启系统代理」就能用，不用改任何设置。
+
+| ✅ 能用 | 说明 |
+| --- | --- |
+| 校内站点 `http(s)://xxx.sdust.edu.cn`、校内 IP 站点 | 页面里的链接、`Location`、Cookie 都会还原成原始地址 |
+| 门户里点的各类 Web 应用 | 包括需要 `vpn_eval` 等注入函数的站点（代理会补兼容层） |
+| 站外网站 | 白名单没命中就直连，速度不受影响 |
+
+### ② 需要勾「同时设置命令行代理环境变量」—— 命令行工具
+
+**这一条最容易踩。** 本程序接管的是 **Windows 系统代理**（注册表
+`HKCU\...\Internet Settings`），而 `git`、`curl`、`pip` 这些程序**并不读它** ——
+它们读的是环境变量 `HTTP_PROXY` / `HTTPS_PROXY`。Windows 界面上那个「系统代理」开关
+只是给走 WinINET/WinHTTP 的程序（浏览器、Electron 应用等）看的。
+
+所以命令行工具要能用，必须先在做界面里勾上**「同时设置命令行代理环境变量」**
+（写在 `HKCU\Environment`，新开的终端才生效，已开的要重开）。
+
+| ✅ 勾选后能用 | 条件 |
+| --- | --- |
+| `git clone/push https://...`（学校 GitLab 等） | git 默认读 `HTTP_PROXY`/`HTTPS_PROXY`，开箱即可 |
+| `curl` / `wget` | 同上 |
+| `pip install`（`-i` 指校内源或 PyPI 镜像） | 默认读环境变量；`--trusted-host` 可能仍需加 |
+| `conda` / `maven` / `gradle` 等 | 各自读环境变量，一般可用 |
+| 下载器 / 更新器（HTTP） | 取决于它是否尊重环境变量 |
+
+**注意：上表成立的前提是「全局模式」。** 只有全局模式才会写 `HTTP_PROXY`/`HTTPS_PROXY`；
+**PAC 模式下这两个变量不会被设置**（PAC 是浏览器侧的机制，命令行程序无法使用），
+所以命令行工具在 PAC 模式下**不走 WebVPN，而是直连**。要用命令行访问校内资源，
+请把模式切到「全局」。
+
+### ③ 用不了 —— 一切非 HTTP(S) 的协议
+
+WebVPN 是 **clientless 反向代理**：所有东西都封装在 443 的 HTTP 里，没有 TCP 隧道。
+下面这些**在原理上就不可能**，无论怎么设置：
+
+| ❌ 用不了 | 原因 |
+| --- | --- |
+| SSH / SFTP、`git@` 走 SSH 的仓库地址 | 非 HTTP，没有隧道 |
+| MySQL / PostgreSQL / Redis / MongoDB | 同上 |
+| RDP / VNC | 同上 |
+| FTP / BT / 其它私有 TCP、UDP 协议 | 同上 |
+| VS Code Remote-SSH、JetBrains Gateway | 依赖 SSH |
+| `ping` / `traceroute` | ICMP，代理完全不涉及 |
+| 游戏 / 语音等 UDP 流量 | 同上 |
+
+这些只能走学校提供的网页版终端/网页工具。
+
+### 补充说明
+
+- **Node.js 的 `fetch` 默认不读代理环境变量**，需要 `NODE_USE_ENV_PROXY=1`
+  （Node 24+）或改用 `undici` 的 `ProxyAgent`；老版本的 `node-fetch`、
+  `axios` 等库一般会读。
+- **Python `requests`** 会读 `HTTP_PROXY`/`HTTPS_PROXY`，可用；但 `urllib3` 新版
+  对 HTTPS 走代理需要 `pip install pysocks` 或确认版本行为。
+- 全局模式下**除** `webvpn.sdust.edu.cn`、`localhost`、`127.0.0.0/8` 外全部经 WebVPN
+  出去，所以命令行工具访问**站外**地址也会绕一圈（能用但慢）。介意的话请用 PAC 模式
+  只让浏览器走，命令行单独用 `git config http.proxy` 之类的方式按需指定。
 
 ## 运行时要
 
@@ -87,6 +141,10 @@ SSH/MySQL/RDP 这些只能走学校提供的网页终端/网页工具。
   `localhost` / `127.0.0.0/8` 外全部经 WebVPN 出去
 - 保存后立即生效：PAC 模式会换 `AutoConfigURL` 的版本号触发客户端重新拉取脚本，
   无需重启浏览器
+
+**⚠ 要用 git / pip / curl 等命令行工具，还需要一步**：勾上「同时设置命令行代理环境变量」，
+并把模式切到「全局」。原因见上面的[能力边界](#-需要勾同时设置命令行代理环境变量-命令行工具)——
+ Windows 系统代理和 `HTTP_PROXY` 环境变量是两套东西，命令行程序只认后者。
 
 ## 架构
 
