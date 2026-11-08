@@ -29,5 +29,5 @@ desktop.ini
 *.log
 tmp/
 
-# 便携包产物（用 scripts/build-portable.ps1 生成后上传到 Releases，不入库）
+# 便携包产物：由 scripts/build-portable.ps1 生成，上传到 Releases，不入库
 dist/

@@ -124,6 +124,15 @@ WebVPN 是 **clientless 反向代理**：所有东西都封装在 443 的 HTTP �
   [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
 - **不需要 Node.js**，**不需要管理员权限**
 
+## 安装（便携版）
+
+到 [Releases](../../releases) 下载 `SDUST-WebVPN-<版本>-portable.zip`，解压到任意文件夹，
+双击 `SDUST WebVPN.exe` 即用。
+
+**不需要安装**：本项目按便携规则设计 —— 数据目录跟着 exe 走，不写注册表、不写系统目录，
+删掉整个文件夹就干净卸载（先在程序里「卸载根证书」「关闭系统代理」）。
+仓库不提供 NSIS 安装包，`tauri.conf.json` 里 `bundle.active` 也是关的。
+
 ## 使用
 
 1. 双击 `SDUST WebVPN.exe`。首次打开弹一次「首次使用 · 两步开始」引导；
@@ -197,7 +206,15 @@ SDUST WebVPN.exe (Tauri 2)
 
 ```powershell
 pnpm install
-pnpm tauri build          # 产物：src-tauri/target/release/sdust-webvpn.exe
+pnpm tauri build          # 只出 exe：src-tauri/target/release/sdust-webvpn.exe
+```
+
+打便携包（exe + 使用说明 + LICENSE 一起压成 zip）：
+
+```powershell
+pwsh -File scripts/build-portable.ps1            # 构建并打包
+pwsh -File scripts/build-portable.ps1 -SkipBuild # 直接用现有 exe 打包
+# 产物：dist/SDUST-WebVPN-<版本>-portable.zip
 ```
 
 调试：
