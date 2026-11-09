@@ -1190,6 +1190,32 @@ body.modal-open {
 /* ---------- 在线规则 / 校内导航 ---------- */
 /* 在线规则的状态 + 入口挂在「分流规则」卡的操作行右侧（.card-foot） */
 
+/* 右下角那组状态：整组一行排开（太长就省略，不要换行把按钮挤到下一行） */
+.card-foot .online-status {
+  flex: 1 1 260px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.card-foot .online-status > .tag,
+.card-foot .online-status > button {
+  flex: 0 0 auto;
+}
+
+.card-foot .online-status #online-meta {
+  min-width: 0;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 弹窗里：操作按钮一行（大小一致），选项另起一行 */
+.online-actions {
+  gap: 8px;
+}
+
 .online-opts {
   margin-top: 10px;
   gap: 10px 14px;
@@ -1197,6 +1223,12 @@ body.modal-open {
 
 .online-opts .radio {
   white-space: nowrap;
+}
+
+/* 「自动同步」的下拉框按内容宽度，别撑满整行 */
+.online-opts select {
+  width: auto;
+  min-width: 104px;
 }
 
 #portal-list.portal-list {

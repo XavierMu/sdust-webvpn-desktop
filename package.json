@@ -1,6 +1,6 @@
 {
   "name": "sdust-webvpn-desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "山科大 WebVPN 本地透明代理桌面端",
   "scripts": {

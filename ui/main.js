@@ -392,6 +392,7 @@ function renderOnline(online) {
   tag($('online-badge'), kind, text);
   tag($('online-modal-badge'), kind, text);
 
+  // 弹窗里空间够，写全；卡片右下角只留一眼能看完的（完整信息挂 title）
   const bits = [];
   if (remoteTotal > 0) bits.push(`在线 ${remoteTotal} 条（白 ${online.remoteProxy || 0} / 黑 ${online.remoteDirect || 0}）`);
   if (online.remoteName) bits.push(String(online.remoteName));
@@ -400,8 +401,15 @@ function renderOnline(online) {
   if (urls.length > 1 && online.lastUrl) bits.push(`本次走 ${urlHost(online.lastUrl)}`);
   if (online.syncedAt) bits.push(`同步于 ${fmtStamp(Number(online.syncedAt))}`);
   if (online.error) bits.push(String(online.error));
-  $('online-meta').textContent = bits.join(' · ');
-  $('online-modal-meta').textContent = bits.join(' · ');
+  const full = bits.join(' · ');
+
+  const cardBits = [];
+  if (remoteTotal > 0) cardBits.push(`在线 ${remoteTotal} 条`);
+  if (urls.length > 1 && online.lastUrl) cardBits.push(`走 ${urlHost(online.lastUrl)}`);
+  if (online.syncedAt) cardBits.push(`${fmtStamp(Number(online.syncedAt)).slice(5)} 同步`);
+  $('online-meta').textContent = cardBits.join(' · ');
+  $('online-meta').title = full;
+  $('online-modal-meta').textContent = full;
   $('btn-online-clear').hidden = !(remoteTotal > 0 || count > 0);
   $('btn-online-sync').disabled = !configured;
   $('btn-online-force').disabled = !configured;

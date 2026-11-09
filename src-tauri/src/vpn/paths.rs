@@ -184,18 +184,20 @@ impl Default for Config {
 
 /// 白名单默认值。改这个列表时记得把下面的 `RULES_VERSION` 加 1，
 /// 老配置会在启动时把「新增的默认项」并进去（不会覆盖用户自己加的）。
-pub const RULES_VERSION: u32 = 2;
+pub const RULES_VERSION: u32 = 3;
 
 /// 新装/迁移时白名单的初始内容，保持「装完就能用」的旧行为。
 /// 校内导航里点开就要能用的站点，域名都写在这里：
 /// `sdust.edu.cn` 一个后缀就带上全部 *.sdust.edu.cn；内网地址段覆盖那些 10/172.16/192.168 的机器；
-/// 剩下三个是校外的付费资源（知网、超星电子书、国研网），学校买了、从校内网出去才能用。
+/// 剩下的几个是校外的付费资源（知网、超星电子书、国研网、IEEE Xplore），
+/// 学校买了、从校内网出去才能用。
 pub fn default_proxy_hosts() -> Vec<String> {
     vec![
         "sdust.edu.cn".to_string(),
         "cnki.net".to_string(),
         "sslibrary.com".to_string(),
         "drcnet.com.cn".to_string(),
+        "ieeexplore.ieee.org".to_string(),
         "10.0.0.0/8".to_string(),
         "172.16.0.0/12".to_string(),
         "192.168.0.0/16".to_string(),
@@ -322,5 +324,29 @@ mod tests {
         assert!(cfg.online_urls_clean().is_empty());
         let back: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
         assert!(back.online_urls_clean().is_empty());
+    }
+
+    #[test]
+    fn builtin_whitelist_covers_ieee() {
+        assert!(default_proxy_hosts()
+            .iter()
+            .any(|h| h == "ieeexplore.ieee.org"));
+    }
+
+    #[test]
+    fn old_config_picks_up_new_builtin_hosts() {
+        // 老配置（rules_version 2，还没有这一条）升级后要能拿到新加的内置白名单，
+        // 自己加的条目一条都不能丢，内置项也不能重复
+        let mut cfg: Config =
+            serde_json::from_str(r#"{"rules_version":2,"proxy_hosts":["sdust.edu.cn","my.example"]}"#)
+                .expect("老配置要能读进来");
+        cfg.migrate_rules();
+        assert_eq!(cfg.rules_version, RULES_VERSION);
+        assert!(cfg.proxy_hosts.iter().any(|h| h == "ieeexplore.ieee.org"));
+        assert!(cfg.proxy_hosts.iter().any(|h| h == "my.example"));
+        assert_eq!(
+            cfg.proxy_hosts.iter().filter(|h| *h == "sdust.edu.cn").count(),
+            1
+        );
     }
 }

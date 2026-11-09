@@ -202,6 +202,10 @@ impl Core {
     ///
     /// 配了多个地址时按顺序试，只要有一份能解析出条目就停；全都失败才报错
     /// （错误里带上每个地址各自的原因）。`force` 关掉「远端比本地旧就拒绝」的检查。
+    ///
+    /// 版本号跟本地缓存**一样**时也先往后试：CDN 缓存分支文件（jsDelivr 对 `@main`
+    /// 约 12 小时）时，先命中的镜像往往是旧内容，版本号恰好相同，直接接受就永远看不到
+    /// 后面的新规则。所以把它当保底留着，继续找更新的；都没有更新的才用保底。
     pub async fn sync_online_rules(
         self: &Arc<Self>,
         force: bool,
@@ -214,8 +218,11 @@ impl Core {
 
         // 一个地址失败就记一条，继续试下一个；最后一起报出来才知道是哪条路的问题
         let mut errors: Vec<String> = Vec::new();
+        // 版本号跟本地一样的那份：先当保底，继续往后找版本更高的
+        let mut same_rev: Option<(String, String, &'static str, online::RemoteRules)> = None;
         let mut fetched: Option<(String, String, &'static str, online::RemoteRules)> = None;
-        for url in &urls {
+        for (i, url) in urls.iter().enumerate() {
+            let more_mirrors = i + 1 < urls.len();
             if !url.starts_with("http://") && !url.starts_with("https://") {
                 errors.push(format!("{url} → 网址要以 http:// 或 https:// 开头"));
                 continue;
@@ -234,14 +241,21 @@ impl Core {
                     continue;
                 }
             };
-            // 远端版本比本地缓存旧：可能是 CDN 还在发旧文件（jsDelivr 有缓存），
-            // 也可能对面误回滚。跳过这个地址，让后面的镜像有机会给出新版本。
             if !force {
                 if let Some(rev) = online::revision(&rules) {
+                    // 远端版本比本地缓存旧：可能是 CDN 还在发旧文件（jsDelivr 有缓存），
+                    // 也可能对面误回滚。跳过这个地址，让后面的镜像有机会给出新版本。
                     if prev_rev > 0 && rev < prev_rev {
                         errors.push(format!(
                             "{url} → 远端版本 {rev} 比本地缓存的 {prev_rev} 旧，已跳过（要强行覆盖请用「强制同步」）"
                         ));
+                        continue;
+                    }
+                    // 版本跟本地一样：很可能就是 CDN 还在发旧文件。留着当保底，先试下一个镜像。
+                    if prev_rev > 0 && rev == prev_rev && more_mirrors {
+                        if same_rev.is_none() {
+                            same_rev = Some((url.clone(), body, via, rules));
+                        }
                         continue;
                     }
                 }
@@ -250,7 +264,8 @@ impl Core {
             break;
         }
 
-        let (url, body, via, rules) = match fetched {
+        // 试完一轮：没有更新的就用「版本相同」的那份保底（缓存本身没错，只是没新版）
+        let (url, body, via, rules) = match fetched.or(same_rev) {
             Some(x) => x,
             None => {
                 let msg = errors.join("；");
