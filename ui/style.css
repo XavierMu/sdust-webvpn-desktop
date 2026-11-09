@@ -847,6 +847,10 @@ body.modal-open {
   inset: 0;
   z-index: 100;
   display: grid;
+  /* 用 minmax(0,1fr) 而不是默认的 auto：默认网格行会被内容撑高，
+     .modal 的 max-height:100% 就失效了，小窗口里弹窗顶部会被切掉 */
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 24px;
   background: color-mix(in srgb, var(--bg) 62%, transparent);
@@ -860,7 +864,9 @@ body.modal-open {
 .modal {
   width: 100%;
   max-width: 560px;
-  max-height: 100%;
+  /* 关键：用视口单位直接限高，别指望 max-height:100%（网格/内边距算下来不可靠）。
+     减去 overlay 的上下 24px padding 和一点余量，小窗口里也不会顶出可视区。 */
+  max-height: calc(100vh - 48px);
   /* 圆角交给外层裁：滚动条放到 .modal-body 里，否则滚动条会贴着内容框右边
      把右下圆角切掉（内容一多就变成方角） */
   overflow: hidden;

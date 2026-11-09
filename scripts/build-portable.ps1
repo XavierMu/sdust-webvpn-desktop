@@ -51,8 +51,13 @@ foreach ($f in @('使用说明.txt', 'LICENSE.txt')) {
 $outDir = Join-Path $root 'dist'
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $zip = Join-Path $outDir "SDUST-WebVPN-$version-portable.zip"
-Remove-Item $zip -Force -ErrorAction SilentlyContinue
-Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
+# 旧 zip 可能被资源管理器/杀软占用：删不掉就直接报错，别让后面 Compress-Archive
+# 静默失败、留下一个看起来"打包完成"的旧包
+if (Test-Path $zip) {
+    Remove-Item $zip -Force -ErrorAction Stop
+    if (Test-Path $zip) { throw "旧 zip 删不掉（可能被占用）：$zip" }
+}
+Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal -Force
 Remove-Item $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
 
 $mb = [math]::Round((Get-Item $zip).Length / 1MB, 2)

@@ -66,7 +66,7 @@
             <label class="field" for="in-mode">
               <span>模式</span>
               <select id="in-mode">
-                <option value="pac" selected>PAC — 按名单分流（默认）</option>
+                <option value="pac" selected>PAC — 按规则分流（默认）</option>
                 <option value="global">全局 — 全部走 WebVPN</option>
               </select>
             </label>
@@ -110,7 +110,7 @@
                 </ul>
               </span>
             </span>
-            <span class="tag" id="rules-mode-badge">按名单分流</span>
+            <span class="tag" id="rules-mode-badge">按规则分流</span>
           </div>
           <div class="grid2">
             <div class="field">
@@ -243,7 +243,7 @@
           <p class="modal-note">
             证书没装的时候，第一次点「开启系统代理」会提示装一次（HTTPS 透明转发必需，装不装都能先用）。
             之后浏览器、git、pip、npm 直接用校内原始地址（如 <code>https://my.sdust.edu.cn</code>）即可，
-            不用再打开 webvpn 门户。模式（全局 / PAC）和黑白名单在「分流规则」里改。
+            不用再打开 webvpn 门户。模式（全局 / PAC）和自定义规则在「分流规则」里改。
           </p>
           <p class="modal-note muted small">
             点窗口 X 只是隐藏到托盘（程序继续在后台跑）；托盘「退出」才会停核心并自动还原系统代理。
@@ -594,7 +594,7 @@
         </div>
         <div class="modal-body">
           <p class="hint muted" id="portal-note">
-            内置一份校内站点清单，用的都是各站点的<strong>原始地址</strong>。先点「开启系统代理」接管，再在这里找要去的站点：点「打开」用默认浏览器开，点「复制」拿到网址自己粘贴。打不开多半是该域名没进分流名单，把域名补进白名单即可。
+            内置一份校内站点清单，用的都是各站点的<strong>原始地址</strong>。先点「开启系统代理」接管，再在这里找要去的站点：点「打开」用默认浏览器开，点「复制」拿到网址自己粘贴。打不开多半是该域名不在白名单里，把域名补进自定义规则即可。
           </p>
           <div id="portal-list" class="portal-list">
             <p class="muted small empty-hint">正在加载站点…</p>
@@ -705,7 +705,7 @@
                   <pre class="online-remote-list" id="online-remote-proxy">—</pre>
                 </div>
                 <div class="online-remote-sec">
-                  <div class="online-remote-head">黑名单 · 强制直连<span class="muted small" id="online-remote-direct-n"></span></div>
+                  <div class="online-remote-head">黑名单 · 直连（优先）<span class="muted small" id="online-remote-direct-n"></span></div>
                   <pre class="online-remote-list" id="online-remote-direct">—</pre>
                 </div>
               </details>

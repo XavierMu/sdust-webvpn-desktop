@@ -264,10 +264,10 @@ function render(st) {
     el.disabled = false;
     el.classList.toggle('dim', globalMode);
   }
-  tag($('rules-mode-badge'), globalMode ? 'warn' : 'ok', globalMode ? '全局 · 名单不生效' : '按名单分流');
+  tag($('rules-mode-badge'), globalMode ? 'warn' : 'ok', globalMode ? '全局 · 规则不生效' : '按规则分流');
   $('rules-mode-note').textContent = globalMode
-    ? '全局模式下名单不生效（要按名单分流请切到 PAC）'
-    : '黑名单优先，未命中直连';
+    ? '全局模式下规则不生效（要按规则分流请切到 PAC）'
+    : '黑名单优先于白名单，都未命中则直连';
   renderRuleLists(st);
   $('in-envproxy').checked = Boolean(cfg.envProxy);
   $('in-envproxy').disabled = !running;
@@ -377,7 +377,7 @@ function renderRuleLists(st) {
   const anyOnline = Number(r.onlineProxy || 0) + Number(r.onlineDirect || 0) > 0;
   const bits = [];
   if (r.global) {
-    bits.push('全局模式 · 名单不生效');
+    bits.push('全局模式 · 规则不生效');
   } else if (r.onlineActive && anyOnline) {
     bits.push(`自定义 ${r.localProxy || 0} 条 + 在线 ${r.onlineProxy || 0} 条`);
   } else {
@@ -977,10 +977,10 @@ $('in-portal-search').addEventListener('input', () => drawPortal());
 $('in-mode').addEventListener('change', () =>
   guard(async () => {
     const pac = $('in-mode').value === 'pac';
-    tag($('rules-mode-badge'), pac ? 'ok' : 'warn', pac ? '按名单分流' : '全局 · 名单不生效');
+    tag($('rules-mode-badge'), pac ? 'ok' : 'warn', pac ? '按规则分流' : '全局 · 规则不生效');
     $('rules-mode-note').textContent = pac
-      ? '黑名单优先，未命中直连'
-      : '全局模式下名单不生效（要按名单分流请切到 PAC）';
+      ? '黑名单优先于白名单，都未命中则直连'
+      : '全局模式下规则不生效（要按规则分流请切到 PAC）';
     for (const id of ['in-proxy-hosts', 'in-direct-hosts'])
       $(id).classList.toggle('dim', !pac);
     // 选完立即生效，不必再点保存（名单里的未保存修改不受影响）
