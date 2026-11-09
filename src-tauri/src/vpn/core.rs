@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -39,6 +39,19 @@ use super::sysproxy;
 
 pub const CONTROL_PORT: u16 = 8897;
 
+/// 启动后多久跑第一次在线规则同步。只要等主窗口挂上、界面能显示「同步中…」就够了，
+/// 不必多拖（新装用户靠这一步拿到第一份公共规则）。
+const FIRST_SYNC_DELAY_SECS: u64 = 3;
+
+/// 同步进行中标志：`/status` 里报给界面，用来显示「正在同步…」
+struct SyncingFlag<'a>(&'a AtomicBool);
+
+impl Drop for SyncingFlag<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct LogLine {
     pub i: u64,
@@ -56,6 +69,8 @@ pub struct Core {
     keepalive: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// 在线规则的定期同步任务
     online_timer: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// 正在同步在线规则（界面据此显示「同步中…」）
+    online_syncing: AtomicBool,
     logs: Mutex<VecDeque<LogLine>>,
     seq: AtomicU64,
     pub control_port: AtomicU16,
@@ -93,6 +108,7 @@ impl Core {
             stats: Mutex::new(None),
             keepalive: Mutex::new(None),
             online_timer: Mutex::new(None),
+            online_syncing: AtomicBool::new(false),
             logs: Mutex::new(VecDeque::new()),
             seq: AtomicU64::new(0),
             control_port: AtomicU16::new(CONTROL_PORT),
@@ -215,6 +231,9 @@ impl Core {
             return Err("还没有填在线规则的网址".into());
         }
         let prev_rev = self.cfg.lock().online_revision;
+        // 同步期间 /status 里 syncing = true，界面显示「同步中…」；不管从哪条路返回都会清掉
+        self.online_syncing.store(true, Ordering::Relaxed);
+        let _syncing = SyncingFlag(&self.online_syncing);
 
         // 一个地址失败就记一条，继续试下一个；最后一起报出来才知道是哪条路的问题
         let mut errors: Vec<String> = Vec::new();
@@ -369,9 +388,27 @@ impl Core {
         // Core::new 是同步构造、跑在主线程上，此时还没有 Tokio reactor，	okio::spawn 会 panic；
         // tauri::async_runtime 有全局运行时，从任何线程调都安全。
         *guard = Some(tauri::async_runtime::spawn(async move {
-            // 先等一会儿让界面和代理起来，第一次同步不用等满 10 分钟的 tick
-            // （新装用户内置了默认规则地址，这一步就是「开箱即有规则」）
-            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            // 等界面和核心起来就行，不用拖太久：新装用户靠这一步拿到第一份公共规则
+            // （内置了默认规则地址，所以这就是「开箱即有规则」）
+            tokio::time::sleep(std::time::Duration::from_secs(FIRST_SYNC_DELAY_SECS)).await;
+            {
+                let (hours, n) = {
+                    let cfg = core.cfg.lock();
+                    (cfg.online_interval_hours, cfg.online_urls_clean().len())
+                };
+                if hours > 0 && n > 0 {
+                    let every = if hours == 24 {
+                        "每 24 小时".to_string()
+                    } else if hours % 24 == 0 {
+                        format!("每 {} 天", hours / 24)
+                    } else {
+                        format!("每 {hours} 小时")
+                    };
+                    core.log(format!(
+                        "在线规则：启动 {FIRST_SYNC_DELAY_SECS} 秒后自动同步一次，之后{every}一次（订阅了 {n} 个地址，可在「在线规则…」里改）"
+                    ));
+                }
+            }
             loop {
                 let (hours, urls) = {
                     let cfg = core.cfg.lock();
@@ -729,8 +766,13 @@ impl Core {
                 "revision": self.cfg.lock().online_revision,
                 "error": self.cfg.lock().online_error,
                 "active": self.online_active(),
+                "syncing": self.online_syncing.load(Ordering::Relaxed),
                 "remoteProxy": remote.as_ref().map(|r| r.proxy.len()).unwrap_or(0),
                 "remoteDirect": remote.as_ref().map(|r| r.direct.len()).unwrap_or(0),
+                // 具体条目也带上：界面「在线规则…」弹窗里要能直接看到当前生效的内容
+                "remoteProxyList": remote.as_ref().map(|r| r.proxy.clone()).unwrap_or_default(),
+                "remoteDirectList": remote.as_ref().map(|r| r.direct.clone()).unwrap_or_default(),
+                "remoteVersion": remote.as_ref().and_then(|r| r.version),
                 "remoteName": remote.as_ref().map(|r| r.name.clone()).unwrap_or_default(),
                 "remoteUpdated": remote.as_ref().map(|r| r.updated.clone()).unwrap_or_default(),
             },

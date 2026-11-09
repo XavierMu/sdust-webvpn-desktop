@@ -322,6 +322,11 @@ main {
   font-size: 11.5px;
 }
 
+/* 说明较长的提示（在线规则）给宽一点，少占垂直空间 */
+.tip-bubble.wide {
+  width: 400px;
+}
+
 .tip-wrap:hover .tip-bubble,
 .tip-wrap:focus-within .tip-bubble,
 .tip-wrap.open .tip-bubble {
@@ -1229,6 +1234,53 @@ body.modal-open {
 .online-opts select {
   width: auto;
   min-width: 104px;
+}
+
+/* 弹窗里的「当前在线规则内容」：默认展开，太长各自滚动 */
+.online-remote {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.online-remote > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  user-select: none;
+}
+
+.online-remote > summary::marker {
+  color: var(--muted);
+}
+
+.online-remote-sec {
+  margin-top: 10px;
+}
+
+.online-remote-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.online-remote-list {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 132px;
+  overflow: auto;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre;
+  word-break: normal;
+  color: var(--text);
 }
 
 #portal-list.portal-list {

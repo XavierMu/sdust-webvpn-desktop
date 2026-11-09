@@ -374,6 +374,7 @@ function renderOnline(online) {
   const active = Boolean(online.active);
   const count = Number(online.count || 0);
   const remoteTotal = Number(online.remoteProxy || 0) + Number(online.remoteDirect || 0);
+  const syncing = Boolean(online.syncing);
   let kind = 'warn';
   let text = '未启用';
   if (online.error) {
@@ -389,11 +390,17 @@ function renderOnline(online) {
     kind = 'warn';
     text = '只用本地';
   }
+  // 正在拉的时候盖过其他状态：这是「现在发生的事」
+  if (syncing) {
+    kind = 'warn';
+    text = '同步中…';
+  }
   tag($('online-badge'), kind, text);
   tag($('online-modal-badge'), kind, text);
 
   // 弹窗里空间够，写全；卡片右下角只留一眼能看完的（完整信息挂 title）
   const bits = [];
+  if (syncing) bits.push('正在同步…');
   if (remoteTotal > 0) bits.push(`在线 ${remoteTotal} 条（白 ${online.remoteProxy || 0} / 黑 ${online.remoteDirect || 0}）`);
   if (online.remoteName) bits.push(String(online.remoteName));
   if (online.remoteUpdated) bits.push(`规则更新 ${online.remoteUpdated}`);
@@ -404,6 +411,7 @@ function renderOnline(online) {
   const full = bits.join(' · ');
 
   const cardBits = [];
+  if (syncing) cardBits.push('正在同步在线规则…');
   if (remoteTotal > 0) cardBits.push(`在线 ${remoteTotal} 条`);
   if (urls.length > 1 && online.lastUrl) cardBits.push(`走 ${urlHost(online.lastUrl)}`);
   if (online.syncedAt) cardBits.push(`${fmtStamp(Number(online.syncedAt)).slice(5)} 同步`);
@@ -411,6 +419,19 @@ function renderOnline(online) {
   $('online-meta').title = full;
   $('online-modal-meta').textContent = full;
   $('btn-online-clear').hidden = !(remoteTotal > 0 || count > 0);
+
+  // 当前这份在线规则的具体条目（弹窗里直接看，不用去翻 state\online_rules.json）
+  const proxyList = (Array.isArray(online.remoteProxyList) ? online.remoteProxyList : []).map(String);
+  const directList = (Array.isArray(online.remoteDirectList) ? online.remoteDirectList : []).map(String);
+  $('online-remote').hidden = proxyList.length + directList.length === 0;
+  $('online-remote-sum').textContent = `（共 ${proxyList.length + directList.length} 条）`;
+  $('online-remote-proxy-n').textContent = `${proxyList.length} 条`;
+  $('online-remote-direct-n').textContent = `${directList.length} 条`;
+  $('online-remote-proxy').textContent = proxyList.length ? proxyList.join('\n') : '（空）';
+  $('online-remote-direct').textContent = directList.length ? directList.join('\n') : '（空）';
+  // 拉的时候进度条/按钮给点反馈
+  $('btn-online-sync').disabled = syncing;
+  $('btn-online-force').disabled = syncing || !configured;
   $('btn-online-sync').disabled = !configured;
   $('btn-online-force').disabled = !configured;
 }
@@ -1188,6 +1209,7 @@ $('portal-ok').addEventListener('click', () => closeModal($('portal')));
 $('portal-x').addEventListener('click', () => closeModal($('portal')));
 
 function openOnlineRules() {
+  closeTips();
   const o = lastStatus?.online || {};
   $('in-online-url').value = (Array.isArray(o.urls) ? o.urls : []).join('\n');
   openModal($('online-modal'));
@@ -1197,20 +1219,33 @@ $('btn-online-open').addEventListener('click', openOnlineRules);
 $('online-ok').addEventListener('click', () => closeModal($('online-modal')));
 $('online-x').addEventListener('click', () => closeModal($('online-modal')));
 
-// 「分流规则」的红色感叹号：鼠标悬浮/键盘聚焦本来就会显示说明，点一下可以把它钉住
+// 红色感叹号：鼠标悬浮/键盘聚焦本来就会显示说明，点一下可以把它钉住
 // （再点、点别处、ESC 都会收起来），触屏或不想按住鼠标的人也能读完。
-const rulesTip = $('rules-tip').closest('.tip-wrap');
-$('rules-tip').addEventListener('click', (e) => {
-  e.stopPropagation();
-  rulesTip.classList.toggle('open');
-});
+const tipWraps = [];
+function pinTip(dotId) {
+  const dot = $(dotId);
+  if (!dot) return;
+  const wrap = dot.closest('.tip-wrap');
+  if (!wrap) return;
+  tipWraps.push(wrap);
+  dot.addEventListener('click', (e) => {
+    e.stopPropagation();
+    tipWraps.forEach((w) => { if (w !== wrap) w.classList.remove('open'); });
+    wrap.classList.toggle('open');
+  });
+}
+pinTip('rules-tip');
+pinTip('online-tip');
+function closeTips() {
+  tipWraps.forEach((w) => w.classList.remove('open'));
+}
 document.addEventListener('click', (e) => {
-  if (!rulesTip.contains(e.target)) rulesTip.classList.remove('open');
+  tipWraps.forEach((w) => { if (!w.contains(e.target)) w.classList.remove('open'); });
 });
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  rulesTip.classList.remove('open');
+  closeTips();
   // A4：ESC 与「✕」走同一套收尾（该写标记的写标记、该继续首启链的继续），
   // 不能只是把窗口藏起来。
   const closers = {

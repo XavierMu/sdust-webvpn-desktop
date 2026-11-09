@@ -131,10 +131,21 @@ fn default_rule_source() -> String {
 
 /// 内置的公共规则地址，按顺序尝试（前面的打不开/内容比本地旧就试下一个）。
 ///
-/// 规则文件托管在 GitHub 的 `sdust-webvpn-rules` 仓库，用 jsDelivr 的 CDN 取
-/// （比 `raw.githubusercontent.com` 在国内的可达性好一些），最后一条原始地址兜底。
+/// 规则文件托管在 GitHub 的 `sdust-webvpn-rules` 仓库。第一条用
+/// `raw.githubusercontent.com`：它没有 CDN 缓存，改完规则立刻就能取到；
+/// 后面两条是 jsDelivr 的镜像，国内可达性通常更好，raw 打不开时兜底。
 /// 全部失败时不动已缓存的规则 —— 也就是「拉不到就继续用上次的」。
 pub fn default_rule_urls() -> Vec<String> {
+    vec![
+        "https://raw.githubusercontent.com/XavierMu/sdust-webvpn-rules/main/rules.json".to_string(),
+        "https://fastly.jsdelivr.net/gh/XavierMu/sdust-webvpn-rules@main/rules.json".to_string(),
+        "https://cdn.jsdelivr.net/gh/XavierMu/sdust-webvpn-rules@main/rules.json".to_string(),
+    ]
+}
+
+/// v0.4.0 / v0.4.1 用过的默认顺序（jsDelivr 在前）。只用来识别「从没改过地址的老配置」，
+/// 好把它升级成上面新的默认顺序；用户自己编辑过的列表不匹配，所以不会被碰。
+fn previous_default_rule_urls() -> Vec<String> {
     vec![
         "https://fastly.jsdelivr.net/gh/XavierMu/sdust-webvpn-rules@main/rules.json".to_string(),
         "https://cdn.jsdelivr.net/gh/XavierMu/sdust-webvpn-rules@main/rules.json".to_string(),
@@ -222,11 +233,15 @@ impl Config {
 
     /// 旧版 `online_url`（单个字符串）→ `online_urls`（列表）。
     /// 用户当初是自己填的地址，迁移时原样保留，不掺默认镜像。
+    /// 另外把「原封不动的旧默认顺序」升级成新的默认顺序（raw 在前）。
     fn migrate_online_urls(&mut self) {
         if !self.legacy_online_url.trim().is_empty() {
             self.online_urls = vec![self.legacy_online_url.trim().to_string()];
         }
         self.legacy_online_url.clear();
+        if self.online_urls == previous_default_rule_urls() {
+            self.online_urls = default_rule_urls();
+        }
     }
 
     /// 生效的在线规则地址：去空行、去重、保持顺序。空 = 用户关掉了在线规则。
@@ -348,5 +363,37 @@ mod tests {
             cfg.proxy_hosts.iter().filter(|h| *h == "sdust.edu.cn").count(),
             1
         );
+    }
+
+    #[test]
+    fn default_urls_try_raw_first() {
+        // raw 没有 CDN 缓存，放第一位才能「改完规则立刻生效」
+        let urls = default_rule_urls();
+        assert!(
+            urls[0].contains("raw.githubusercontent.com"),
+            "第一条应该是 raw：{urls:?}"
+        );
+    }
+
+    #[test]
+    fn untouched_old_default_order_is_upgraded() {
+        // 从没动过地址框的老配置，升级后应该变成新顺序（raw 在前）
+        let mut cfg = Config::default();
+        cfg.online_urls = previous_default_rule_urls();
+        cfg.migrate_online_urls();
+        assert_eq!(cfg.online_urls, default_rule_urls());
+    }
+
+    #[test]
+    fn user_edited_url_list_is_left_alone() {
+        // 用户自己排的顺序（哪怕只是调换了默认三条）不能被迁移覆盖
+        let mut cfg = Config::default();
+        cfg.online_urls = vec![
+            "https://cdn.jsdelivr.net/gh/XavierMu/sdust-webvpn-rules@main/rules.json".into(),
+            "https://raw.githubusercontent.com/XavierMu/sdust-webvpn-rules/main/rules.json".into(),
+        ];
+        cfg.migrate_online_urls();
+        assert_eq!(cfg.online_urls.len(), 2);
+        assert!(cfg.online_urls[0].contains("cdn.jsdelivr.net"));
     }
 }
