@@ -809,7 +809,9 @@ code {
 .logs pre {
   margin: 0;
   height: auto;
-  overflow: auto;
+  /* 只做纵向滚动；横向隐藏，免得出现第二条滚动条把圆角挤掉 */
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -859,13 +861,21 @@ body.modal-open {
   width: 100%;
   max-width: 560px;
   max-height: 100%;
-  overflow: auto;
+  /* 圆角交给外层裁：滚动条放到 .modal-body 里，否则滚动条会贴着内容框右边
+     把右下圆角切掉（内容一多就变成方角） */
+  overflow: hidden;
   background: var(--card);
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+.modal-head,
+.modal-foot {
+  flex: 0 0 auto;
 }
 
 .modal.narrow {
@@ -893,6 +903,12 @@ body.modal-open {
 
 .modal-body {
   padding: 14px 16px 4px;
+  /* 内容超出时由这里滚动（标题栏和底部按钮固定不动），
+     滚动条在内容区内侧，不会破坏外层圆角 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .modal-note {
@@ -1282,9 +1298,11 @@ body.modal-open {
 
 .online-remote-list {
   margin: 0;
-  padding: 8px 10px;
+  padding: 8px 14px 8px 10px;
   max-height: 132px;
-  overflow: auto;
+  /* 只纵向滚动：横向滚动条会顶掉右下圆角 */
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1307,11 +1325,13 @@ body.modal-open {
 
 .rule-view {
   margin: 0;
-  padding: 8px 10px;
+  padding: 8px 14px 8px 10px;
   /* 固定高度：有没有内容、内容多少都一样高，两栏才对得齐 */
   height: 120px;
   flex: 1 1 auto;
-  overflow: auto;
+  /* 只纵向滚动：横向滚动条会顶掉右下圆角 */
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 8px;

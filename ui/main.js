@@ -14,6 +14,15 @@ function syncDirtyUI() {
   $('dirty-hint').hidden = !any;
   $('btn-reset').hidden = !any;
 }
+/* 端口改了但还没点保存：给个提示，免得以为已经生效（和名单那套分开，各存各的） */
+let portDirty = false;
+function syncPortDirtyUI() {
+  $('port-dirty').hidden = !portDirty;
+}
+$('in-port').addEventListener('input', () => {
+  portDirty = true;
+  syncPortDirtyUI();
+});
 for (const id of ['in-proxy-hosts', 'in-direct-hosts']) {
   const el = $(id);
   const mark = () => {
@@ -220,7 +229,9 @@ function render(st) {
   $('btn-sysproxy').textContent = sysOurs ? '关闭系统代理 ↺' : '开启系统代理';
   $('btn-sysproxy').className = sysOurs ? 'off' : 'activate';
 
-  if (document.activeElement !== $('in-port')) $('in-port').value = cfg.proxyPort ?? 8899;
+  if (document.activeElement !== $('in-port') && !portDirty) {
+    $('in-port').value = cfg.proxyPort ?? 8899;
+  }
   // 名单：用户正在编辑（input 事件已标脏）就不覆盖，其余情况一律以服务端为准。
   // 不能拿"值不同"当脏判据：首次渲染时输入框还是空的，会被误判成用户改动。
   for (const [id, arr] of [
@@ -421,18 +432,19 @@ function renderOnline(online) {
   const syncing = Boolean(online.syncing);
   let kind = 'warn';
   let text = '未启用';
-  if (online.error) {
+  // 「已关闭」优先：关掉之后即使上一次同步失败过，也不该再报「同步失败」吓人
+  if (configured && src === 'local') {
+    kind = 'warn';
+    text = '在线已关闭';
+  } else if (online.error) {
     kind = 'bad';
     text = '同步失败';
   } else if (configured && active && remoteTotal > 0) {
     kind = 'ok';
-    text = '在线 + 本地';
+    text = '在线已启用';
   } else if (configured && active) {
     kind = 'warn';
     text = '待同步';
-  } else if (configured && src === 'local') {
-    kind = 'warn';
-    text = '只用本地';
   }
   // 正在拉的时候盖过其他状态：这是「现在发生的事」
   if (syncing) {
@@ -884,6 +896,8 @@ $('btn-save').addEventListener('click', () =>
       sysproxyMode: $('in-mode').value === 'pac' ? 'pac' : 'global',
       envProxy: $('in-envproxy').checked,
     });
+    portDirty = false;
+    syncPortDirtyUI();
     forceSync();
     await refresh();
   })
