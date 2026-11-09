@@ -1305,9 +1305,20 @@ function openRules(section) {
   syncDirtyUI();
   $('in-online-url').value = (st.online?.urls || []).join('\n');
   openModal($('online-modal'));
-  // 「编辑规则…」进来默认把焦点放在自定义规则的白名单上
+  // 滚回顶部：弹窗内容比窗口高时，.modal-body 会保留上次的滚动位置，
+  // 一打开就停在中间，用户看不到标题和第一个分区
+  const body = $('online-modal').querySelector('.modal-body');
+  if (body) body.scrollTop = 0;
+  // 「编辑规则…」进来默认把焦点放在自定义规则的白名单上。
+  // focus({preventScroll:true})：否则浏览器为了把这个框滚进视野，
+  // 会把 .modal-body 一起滚下去，标题和自定义分区就被顶没了
   const focusId = section === 'online' ? 'in-online-url' : 'in-proxy-hosts';
-  setTimeout(() => $(focusId).focus(), 60);
+  setTimeout(() => {
+    const el = $(focusId);
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (body) body.scrollTop = 0;
+  }, 60);
 }
 
 $('btn-rules-open').addEventListener('click', () => openRules('custom'));

@@ -1360,8 +1360,14 @@ body.modal-open {
 }
 
 /* ---- 弹窗里的两个分区 ---- */
+/*
+ * 这里是滚动容器（.modal-body）里的内容，必须是「有多高就多高」的块级布局：
+ * 一旦让分区去适应容器高度，小窗口里它们会被压扁，内容被 overflow:hidden 裁掉，
+ * 而且 scrollHeight 也不会变大 —— 表面上就没有滚动条、内容凭空消失。
+ */
 .rule-body {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 14px 16px;
 }
@@ -1369,7 +1375,9 @@ body.modal-open {
 .rule-sec {
   border: 1px solid var(--border);
   border-radius: 10px;
+  /* 圆角裁切；分区自身按内容撑满，不允许被压缩 */
   overflow: hidden;
+  flex: 0 0 auto;
 }
 
 .rule-sec-head {
