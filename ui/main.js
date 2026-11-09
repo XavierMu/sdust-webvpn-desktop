@@ -338,8 +338,8 @@ function render(st) {
 
 /* ---------- 分流规则：卡片里的只读展示 ---------- */
 /**
- * 卡片上是「合并后真正生效的名单」（在线 + 本地，本地黑名单优先），只读；
- * 改名单去弹窗的「自定义规则」标签页。来源条数写在左下的 #rules-source-note 里。
+ * 卡片上是「合并后真正生效的名单」（自定义 + 在线，自定义黑名单优先），只读；
+ * 改名单去弹窗。来源条数写在左下的 #rules-source-note 里。
  */
 function renderRuleLists(st) {
   const r = st?.rules || {};
@@ -362,21 +362,21 @@ function renderRuleLists(st) {
   fill('rules-proxy', 'rules-proxy-n', proxy);
   fill('rules-direct', 'rules-direct-n', direct);
 
-  // 来源标识：只写「在线补了多少、本地多少」，条数明细让上面的徽标去说
+  // 来源标识：术语统一成「自定义 / 在线」
   const anyOnline = Number(r.onlineProxy || 0) + Number(r.onlineDirect || 0) > 0;
   const bits = [];
   if (r.global) {
     bits.push('全局模式 · 名单不生效');
   } else if (r.onlineActive && anyOnline) {
-    bits.push(`在线 ${r.onlineProxy || 0} 条 + 本地 ${r.localProxy || 0} 条`);
+    bits.push(`自定义 ${r.localProxy || 0} 条 + 在线 ${r.onlineProxy || 0} 条`);
   } else {
-    bits.push(`仅本地 ${r.localProxy || 0} 条`);
+    bits.push(`仅自定义 ${r.localProxy || 0} 条`);
   }
   $('rules-source-note').textContent = bits.join(' · ');
 
-  // 弹窗「自定义规则」栏也标一下本机保存了几条
+  // 弹窗「自定义规则」分区头：只写条数，别重复「本机已保存」这类话
   const cnt = $('rules-local-count');
-  if (cnt) cnt.textContent = `本机已保存：白 ${r.localProxy || 0} / 黑 ${r.localDirect || 0}`;
+  if (cnt) cnt.textContent = `白 ${r.localProxy || 0} / 黑 ${r.localDirect || 0}`;
 }
 
 /* ---------- 在线规则 ---------- */
@@ -403,16 +403,9 @@ function renderOnline(online) {
     const text = (Array.isArray(online.urls) ? online.urls : []).join('\n');
     if ($('in-online-url').value !== text) $('in-online-url').value = text;
   }
+  // 分区头里的「启用」勾选框：勾上 = 在线规则参与合并
   const src = online.source === 'local' ? 'local' : 'online';
-  $('src-online').checked = src === 'online';
-  $('src-local').checked = src === 'local';
-  // 顶部那条公共开关：说明当前生效情况，顺便指出关闭后在线规则不参与合并
-  const urlsNow = (Array.isArray(online.urls) ? online.urls : []).filter((u) => String(u).trim());
-  $('rule-source-hint').textContent = src === 'local'
-    ? '当前只生效「自定义规则」，订阅的规则仍会同步但不会参与分流'
-    : urlsNow.length
-      ? '当前：自定义规则 + 在线规则合并（自定义黑名单优先）'
-      : '还没填订阅地址，暂时只有自定义规则生效';
+  $('in-rule-source').checked = src === 'online';
   if (document.activeElement !== $('in-online-interval')) {
     const hours = Number(online.intervalHours ?? 24);
     const sel = $('in-online-interval');
@@ -468,7 +461,16 @@ function renderOnline(online) {
   if (online.syncedAt && !syncing) cardBits.push(`同步于 ${fmtStamp(Number(online.syncedAt)).slice(5)}`);
   $('online-meta').textContent = cardBits.join(' · ');
   $('online-meta').title = full;
-  $('online-modal-meta').textContent = full;
+  // 弹窗里状态由分区头摘要 + 折叠明细承载，这行只在出错时用来说明原因
+  $('online-modal-meta').textContent = online.error ? String(online.error) : '';
+
+  // 分区头右边的摘要：条数 + 上次同步时间，收起时也能一眼看到状态
+  const headBits = [];
+  if (remoteTotal > 0) headBits.push(`白 ${online.remoteProxy || 0} / 黑 ${online.remoteDirect || 0}`);
+  if (syncing) headBits.push('同步中…');
+  else if (online.syncedAt) headBits.push(`${fmtStamp(Number(online.syncedAt)).slice(5)} 同步`);
+  $('online-sec-meta').textContent = headBits.join(' · ');
+
   $('btn-online-clear').hidden = !(remoteTotal > 0 || count > 0);
 
   // 当前这份在线规则的具体条目（弹窗里直接看，不用去翻 state\online_rules.json）
@@ -939,15 +941,14 @@ $('btn-online-clear').addEventListener('click', () =>
   })
 );
 
-for (const id of ['src-online', 'src-local']) {
-  $(id).addEventListener('change', () =>
-    guard(async () => {
-      const source = $('src-online').checked ? 'online' : 'local';
-      await api('/config', { ruleSource: source });
-      await refresh();
-    })
-  );
-}
+// 在线分区的「启用」：勾上 = 在线规则参与合并，取消 = 只认自定义规则
+$('in-rule-source').addEventListener('change', () =>
+  guard(async () => {
+    const source = $('in-rule-source').checked ? 'online' : 'local';
+    await api('/config', { ruleSource: source });
+    await refresh();
+  })
+);
 $('in-online-interval').addEventListener('change', () =>
   guard(async () => {
     const hours = Number($('in-online-interval').value);
@@ -1260,20 +1261,27 @@ $('btn-portal').addEventListener('click', () => guard(openPortal));
 $('portal-ok').addEventListener('click', () => closeModal($('portal')));
 $('portal-x').addEventListener('click', () => closeModal($('portal')));
 
-/* ---------- 分流规则弹窗：两个标签页 ---------- */
-/** 切到指定标签页（custom / online） */
-function selectTab(name) {
-  const target = name === 'online' ? 'online' : 'custom';
-  for (const btn of document.querySelectorAll('#online-modal .tab')) {
-    const on = btn.dataset.pane === target;
-    btn.setAttribute('aria-selected', on ? 'true' : 'false');
-    btn.classList.toggle('active', on);
+/* ---------- 分流规则弹窗：两个可折叠分区 ---------- */
+/** 展开 / 收起某个分区（sec 是 section 元素，btn 是里面那个按钮） */
+function setSectionOpen(sec, open) {
+  sec.dataset.open = open ? '1' : '0';
+  const btn = sec.querySelector('.sec-toggle');
+  if (btn) {
+    btn.textContent = open ? '收起' : '展开';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
-  $('pane-custom').hidden = target !== 'custom';
-  $('pane-online').hidden = target !== 'online';
 }
 
-function openRules(tab) {
+for (const id of ['btn-sec-custom', 'btn-sec-online']) {
+  const btn = $(id);
+  const sec = btn.closest('.rule-sec');
+  setSectionOpen(sec, true);
+  btn.addEventListener('click', () =>
+    setSectionOpen(sec, sec.dataset.open !== '1')
+  );
+}
+
+function openRules(section) {
   closeTips();
   const st = lastStatus || {};
   // 自定义规则框：打开时一律以服务端为准（未保存的改动丢弃，避免带着上一次的脏值进来）
@@ -1282,15 +1290,12 @@ function openRules(tab) {
   dirtyFields.clear();
   syncDirtyUI();
   $('in-online-url').value = (st.online?.urls || []).join('\n');
-  selectTab(tab);
   openModal($('online-modal'));
-  const focusId = tab === 'online' ? 'in-online-url' : 'in-proxy-hosts';
+  // 「编辑规则…」进来默认把焦点放在自定义规则的白名单上
+  const focusId = section === 'online' ? 'in-online-url' : 'in-proxy-hosts';
   setTimeout(() => $(focusId).focus(), 60);
 }
 
-for (const btn of document.querySelectorAll('#online-modal .tab')) {
-  btn.addEventListener('click', () => selectTab(btn.dataset.pane));
-}
 $('btn-rules-open').addEventListener('click', () => openRules('custom'));
 $('online-ok').addEventListener('click', () => closeModal($('online-modal')));
 $('online-x').addEventListener('click', () => closeModal($('online-modal')));

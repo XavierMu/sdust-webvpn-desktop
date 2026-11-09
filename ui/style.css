@@ -1308,8 +1308,9 @@ body.modal-open {
 .rule-view {
   margin: 0;
   padding: 8px 10px;
-  min-height: 84px;
-  max-height: 132px;
+  /* 固定高度：有没有内容、内容多少都一样高，两栏才对得齐 */
+  height: 120px;
+  flex: 1 1 auto;
   overflow: auto;
   background: var(--input-bg);
   border: 1px solid var(--border);
@@ -1327,6 +1328,86 @@ body.modal-open {
   font-family: inherit;
 }
 
+/* 两栏等高：标题可能换行时，让 pre 把剩余空间吃掉，底部依然对齐 */
+.grid2 > .field {
+  min-height: 0;
+}
+
+/* ---- 弹窗里的两个分区 ---- */
+.rule-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.rule-sec {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.rule-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid transparent;
+}
+
+.rule-sec[data-open="1"] .rule-sec-head {
+  border-bottom-color: var(--border);
+}
+
+.rule-sec-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rule-sec-head .spacer {
+  flex: 1;
+}
+
+.rule-sec-body {
+  padding: 12px;
+}
+
+.rule-sec[data-open="0"] .rule-sec-body {
+  display: none;
+}
+
+.rule-sec-foot {
+  margin-top: 10px;
+  align-items: center;
+}
+
+/* 分区右上角的收起 / 展开 */
+.sec-toggle {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.sec-toggle:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card-2);
+}
+
+/* 分区头里的「启用」勾选框，不要 .check 的默认上边距 */
+.rule-enable {
+  margin-top: 0;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text);
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
 /* 端口 + 保存按钮同一行 */
 .inline-ctrl {
   display: flex;
@@ -1341,69 +1422,6 @@ body.modal-open {
 
 .inline-ctrl > button {
   flex: 0 0 auto;
-}
-
-/* 弹窗顶部（标签页之上）的公共开关：在线名单是否参与合并 */
-.rule-source-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 14px;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-soft);
-}
-
-.rule-source-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.rule-source-bar .radio {
-  white-space: nowrap;
-}
-
-.rule-source-bar #rule-source-hint {
-  margin-left: auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---- 弹窗标签页 ---- */
-.tabs {
-  display: flex;
-  gap: 4px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.tab {
-  height: 38px;
-  padding: 0 14px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.tab:hover:not(:disabled) {
-  color: var(--text);
-  border-bottom-color: var(--border-strong);
-}
-
-.tab[aria-selected="true"] {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
-
-.tab-pane[hidden] {
-  display: none;
 }
 
 #portal-list.portal-list {

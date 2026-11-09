@@ -604,7 +604,8 @@
       </div>
     </div>
 
-    <!-- 分流规则（自定义 + 在线，两个标签页） -->
+
+    <!-- 分流规则（自定义 + 在线，两个可折叠分区） -->
     <div id="online-modal" class="overlay" hidden>
       <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="online-title">
         <div class="modal-head">
@@ -614,11 +615,11 @@
               aria-label="分流规则说明" aria-describedby="online-note">!</button>
             <span class="tip-bubble wide" id="online-note" role="tooltip">
               <ul class="tip-list">
-                <li><b>自定义规则</b>是本机配置（<code>state\config.json</code>）；<b>在线规则</b>按间隔从订阅地址拉取。</li>
-                <li>两者合并后生效；<b>自定义黑名单优先于一切</b>。</li>
-                <li>顶部开关关掉在线名单后，订阅仍会同步，但不参与分流。</li>
+                <li>生效名单 = <b>自定义规则</b> + <b>在线规则</b>。</li>
+                <li><b>自定义黑名单优先于一切</b>，包括在线白名单。</li>
+                <li>在线规则可单独关掉；关闭后仍会同步，只是不参与分流。</li>
                 <li>地址一行一个，按顺序试；打不开或版本不比本地新就换下一条。</li>
-                <li>全部失败会保留上一次成功的规则；要用旧版覆盖点「强制同步」。</li>
+                <li>全部地址都失败时保留上一次成功的规则。</li>
               </ul>
             </span>
           </span>
@@ -627,84 +628,87 @@
           <button id="online-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
         </div>
 
-        <!-- 顶部公共开关：在线名单是否参与合并（两个标签页都受它影响） -->
-        <div class="rule-source-bar">
-          <span class="rule-source-label">在线名单</span>
-          <label class="radio"><input type="radio" name="rule-source" id="src-online" value="online" /> 参与合并</label>
-          <label class="radio"><input type="radio" name="rule-source" id="src-local" value="local" /> 不参与（只用自定义）</label>
-          <span class="muted small" id="rule-source-hint"></span>
-        </div>
-
-        <div class="tabs" role="tablist">
-          <button id="tab-custom" class="tab" role="tab" aria-selected="true"
-            aria-controls="pane-custom" data-pane="custom">自定义规则</button>
-          <button id="tab-online" class="tab" role="tab" aria-selected="false"
-            aria-controls="pane-online" data-pane="online">在线规则</button>
-        </div>
-
-        <div class="modal-body">
-          <!-- 标签页 1：自定义规则 -->
-          <div id="pane-custom" class="tab-pane" role="tabpanel" aria-labelledby="tab-custom">
-            <div class="grid2">
-              <div class="field">
-                <label for="in-proxy-hosts">白名单 · 走 WebVPN</label>
-                <textarea id="in-proxy-hosts" rows="7" spellcheck="false"></textarea>
+        <div class="modal-body rule-body">
+          <!-- 分区 1：自定义规则 -->
+          <section class="rule-sec" id="sec-custom">
+            <header class="rule-sec-head">
+              <h4>自定义规则</h4>
+              <span class="muted small" id="rules-local-count">白 0 / 黑 0</span>
+              <span class="spacer"></span>
+              <button id="btn-sec-custom" class="sec-toggle" type="button"
+                aria-expanded="true" aria-controls="sec-custom-body">收起</button>
+            </header>
+            <div class="rule-sec-body" id="sec-custom-body">
+              <div class="grid2">
+                <div class="field">
+                  <label for="in-proxy-hosts">白名单 · 走 WebVPN</label>
+                  <textarea id="in-proxy-hosts" rows="6" spellcheck="false"></textarea>
+                </div>
+                <div class="field">
+                  <label for="in-direct-hosts">黑名单 · 直连（优先）</label>
+                  <textarea id="in-direct-hosts" rows="6" spellcheck="false"></textarea>
+                </div>
               </div>
-              <div class="field">
-                <label for="in-direct-hosts">黑名单 · 直连（优先）</label>
-                <textarea id="in-direct-hosts" rows="7" spellcheck="false"></textarea>
+              <div class="row between rule-sec-foot">
+                <div class="action-group">
+                  <button id="btn-rules-save" class="primary">保存</button>
+                  <button id="btn-reset" class="ghost" hidden>放弃修改</button>
+                  <span class="tag warn" id="dirty-hint" hidden>未保存</span>
+                  <span class="muted small">
+                    <code>sdust.edu.cn</code> 含子域 · <code>10.0.0.0/8</code> 网段 · <code>*</code> 全部
+                  </span>
+                </div>
               </div>
             </div>
-            <p class="hint muted">
-              <code>sdust.edu.cn</code> 含子域 · <code>10.0.0.0/8</code> 网段 · <code>192.168.1.5</code> 单个 IP ·
-              <code>*</code> 全部主机。黑名单优先于白名单，也优先于在线规则；保存后立即生效。
-            </p>
-            <div class="row between">
-              <div class="action-group">
-                <button id="btn-rules-save" class="primary">保存</button>
-                <button id="btn-reset" class="ghost" hidden>放弃修改</button>
-                <span class="tag warn" id="dirty-hint" hidden>未保存</span>
-              </div>
-              <span class="muted small" id="rules-local-count"></span>
-            </div>
-          </div>
+          </section>
 
-          <!-- 标签页 2：在线规则 -->
-          <div id="pane-online" class="tab-pane" role="tabpanel" aria-labelledby="tab-online" hidden>
-            <label class="field">
-              <span>规则文件地址（一行一个，按顺序尝试；前面的打不开或内容更旧就用后面的）</span>
-              <textarea id="in-online-url" rows="4" spellcheck="false" autocomplete="off"></textarea>
-            </label>
-            <div class="row wrap online-actions">
-              <button id="btn-online-sync" class="ghost">立即同步</button>
-              <button id="btn-online-force" class="ghost"
-                title="忽略版本检查，用远端内容覆盖本地缓存">强制同步</button>
-              <button id="btn-online-clear" class="ghost" hidden>清除缓存</button>
-              <label class="radio inline-gap online-interval">
-                <span class="muted">自动同步</span>
-                <select id="in-online-interval">
-                  <option value="0">关闭</option>
-                  <option value="6">每 6 小时</option>
-                  <option value="24">每天</option>
-                  <option value="168">每周</option>
-                </select>
+          <!-- 分区 2：在线规则 -->
+          <section class="rule-sec" id="sec-online">
+            <header class="rule-sec-head">
+              <h4>在线规则</h4>
+              <label class="check rule-enable">
+                <input id="in-rule-source" type="checkbox" />
+                <span>启用</span>
               </label>
+              <span class="muted small" id="online-sec-meta"></span>
+              <span class="spacer"></span>
+              <button id="btn-sec-online" class="sec-toggle" type="button"
+                aria-expanded="true" aria-controls="sec-online-body">收起</button>
+            </header>
+            <div class="rule-sec-body" id="sec-online-body">
+              <label class="field">
+                <span>订阅地址（一行一个，按顺序尝试）</span>
+                <textarea id="in-online-url" rows="3" spellcheck="false" autocomplete="off"></textarea>
+              </label>
+              <div class="row wrap online-actions">
+                <button id="btn-online-sync" class="ghost">立即同步</button>
+                <button id="btn-online-force" class="ghost"
+                  title="忽略版本检查，用远端内容覆盖本地缓存">强制同步</button>
+                <button id="btn-online-clear" class="ghost" hidden>清除缓存</button>
+                <label class="radio inline-gap online-interval">
+                  <span class="muted">自动同步</span>
+                  <select id="in-online-interval">
+                    <option value="0">关闭</option>
+                    <option value="6">每 6 小时</option>
+                    <option value="24">每天</option>
+                    <option value="168">每周</option>
+                  </select>
+                </label>
+              </div>
+              <p class="hint muted" id="online-modal-meta"></p>
+              <details class="online-remote" id="online-remote">
+                <summary>查看条目<span class="muted small" id="online-remote-sum"></span></summary>
+                <div class="online-remote-sec">
+                  <div class="online-remote-head">白名单 · 走 WebVPN<span class="muted small" id="online-remote-proxy-n"></span></div>
+                  <pre class="online-remote-list" id="online-remote-proxy">—</pre>
+                </div>
+                <div class="online-remote-sec">
+                  <div class="online-remote-head">黑名单 · 强制直连<span class="muted small" id="online-remote-direct-n"></span></div>
+                  <pre class="online-remote-list" id="online-remote-direct">—</pre>
+                </div>
+              </details>
             </div>
-            <p class="hint muted" id="online-modal-meta"></p>
-            <details class="online-remote" id="online-remote">
-              <summary>当前在线规则内容<span class="muted small" id="online-remote-sum"></span></summary>
-              <div class="online-remote-sec">
-                <div class="online-remote-head">白名单 · 走 WebVPN<span class="muted small" id="online-remote-proxy-n"></span></div>
-                <pre class="online-remote-list" id="online-remote-proxy">—</pre>
-              </div>
-              <div class="online-remote-sec">
-                <div class="online-remote-head">黑名单 · 强制直连<span class="muted small" id="online-remote-direct-n"></span></div>
-                <pre class="online-remote-list" id="online-remote-direct">—</pre>
-              </div>
-              <p class="hint muted">这里是刚从订阅地址取回来的那份（缓存在本地 <code>state\online_rules.json</code>）。
-                它和「自定义规则」合并后才是最终生效的分流结果，自定义黑名单优先。</p>
-            </details>
-          </div>
+          </section>
         </div>
 
         <div class="modal-foot">
@@ -712,6 +716,7 @@
         </div>
       </div>
     </div>
+
 
     <script src="sites.js"></script>
   <script src="main.js"></script>
