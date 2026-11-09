@@ -257,6 +257,7 @@ function render(st) {
   $('rules-mode-note').textContent = globalMode
     ? '全局模式下名单不生效（要按名单分流请切到 PAC）'
     : '黑名单优先，未命中直连';
+  renderRuleLists(st);
   $('in-envproxy').checked = Boolean(cfg.envProxy);
   $('in-envproxy').disabled = !running;
   $('btn-save').disabled = false;
@@ -335,6 +336,49 @@ function render(st) {
   renderPortal();
 }
 
+/* ---------- 分流规则：卡片里的只读展示 ---------- */
+/**
+ * 卡片上是「合并后真正生效的名单」（在线 + 本地，本地黑名单优先），只读；
+ * 改名单去弹窗的「自定义规则」标签页。来源条数写在左下的 #rules-source-note 里。
+ */
+function renderRuleLists(st) {
+  const r = st?.rules || {};
+  const cfg = st?.config || {};
+  const asList = (v, fallback) => (Array.isArray(v) ? v.map(String) : (fallback || []).map(String));
+  const proxy = asList(r.effectiveProxy, cfg.proxyHosts);
+  const direct = asList(r.effectiveDirect, cfg.directHosts);
+
+  const fill = (id, countId, list) => {
+    const el = $(id);
+    const text = list.length ? list.join('\n') : '（空）';
+    // 内容没变就别重设，免得把用户的滚动位置顶回去
+    if (el.textContent !== text) {
+      el.textContent = text;
+      el.scrollTop = 0;
+    }
+    el.classList.toggle('empty', list.length === 0);
+    $(countId).textContent = `${list.length} 条`;
+  };
+  fill('rules-proxy', 'rules-proxy-n', proxy);
+  fill('rules-direct', 'rules-direct-n', direct);
+
+  // 来源标识：只写「在线补了多少、本地多少」，条数明细让上面的徽标去说
+  const anyOnline = Number(r.onlineProxy || 0) + Number(r.onlineDirect || 0) > 0;
+  const bits = [];
+  if (r.global) {
+    bits.push('全局模式 · 名单不生效');
+  } else if (r.onlineActive && anyOnline) {
+    bits.push(`在线 ${r.onlineProxy || 0} 条 + 本地 ${r.localProxy || 0} 条`);
+  } else {
+    bits.push(`仅本地 ${r.localProxy || 0} 条`);
+  }
+  $('rules-source-note').textContent = bits.join(' · ');
+
+  // 弹窗「自定义规则」栏也标一下本机保存了几条
+  const cnt = $('rules-local-count');
+  if (cnt) cnt.textContent = `本机已保存：白 ${r.localProxy || 0} / 黑 ${r.localDirect || 0}`;
+}
+
 /* ---------- 在线规则 ---------- */
 /** 多行地址框 → 地址数组（一行一个，去掉空行） */
 function readOnlineUrls() {
@@ -362,6 +406,13 @@ function renderOnline(online) {
   const src = online.source === 'local' ? 'local' : 'online';
   $('src-online').checked = src === 'online';
   $('src-local').checked = src === 'local';
+  // 顶部那条公共开关：说明当前生效情况，顺便指出关闭后在线规则不参与合并
+  const urlsNow = (Array.isArray(online.urls) ? online.urls : []).filter((u) => String(u).trim());
+  $('rule-source-hint').textContent = src === 'local'
+    ? '当前只生效「自定义规则」，订阅的规则仍会同步但不会参与分流'
+    : urlsNow.length
+      ? '当前：自定义规则 + 在线规则合并（自定义黑名单优先）'
+      : '还没填订阅地址，暂时只有自定义规则生效';
   if (document.activeElement !== $('in-online-interval')) {
     const hours = Number(online.intervalHours ?? 24);
     const sel = $('in-online-interval');
@@ -410,11 +461,11 @@ function renderOnline(online) {
   if (online.error) bits.push(String(online.error));
   const full = bits.join(' · ');
 
+  // 卡片右下角只留「什么时候同步的 / 走的哪条」，条数由徽标和左下的来源标识负责
   const cardBits = [];
-  if (syncing) cardBits.push('正在同步在线规则…');
-  if (remoteTotal > 0) cardBits.push(`在线 ${remoteTotal} 条`);
+  if (syncing) cardBits.push('正在同步…');
   if (urls.length > 1 && online.lastUrl) cardBits.push(`走 ${urlHost(online.lastUrl)}`);
-  if (online.syncedAt) cardBits.push(`${fmtStamp(Number(online.syncedAt)).slice(5)} 同步`);
+  if (online.syncedAt && !syncing) cardBits.push(`同步于 ${fmtStamp(Number(online.syncedAt)).slice(5)}`);
   $('online-meta').textContent = cardBits.join(' · ');
   $('online-meta').title = full;
   $('online-modal-meta').textContent = full;
@@ -819,28 +870,30 @@ $('in-envproxy').addEventListener('change', () =>
   })
 );
 
-/* ---------- 保存设置 ---------- */
+/* ---------- 保存连接设置（端口等） ---------- */
 $('btn-save').addEventListener('click', () =>
   guard(async () => {
     const proxyPort = Number($('in-port').value);
     if (!Number.isInteger(proxyPort) || proxyPort < 1024 || proxyPort > 65535) {
       throw new Error('代理端口要在 1024-65535 之间');
     }
-    const proxyHosts = $('in-proxy-hosts')
-      .value.split(/[\n,，;；]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const directHosts = $('in-direct-hosts')
-      .value.split(/[\n,，;；]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
     await api('/config', {
       proxyPort,
-      proxyHosts,
-      directHosts,
       sysproxyMode: $('in-mode').value === 'pac' ? 'pac' : 'global',
       envProxy: $('in-envproxy').checked,
     });
+    forceSync();
+    await refresh();
+  })
+);
+
+/* ---------- 保存自定义规则（弹窗里的那两个框） ---------- */
+$('btn-rules-save').addEventListener('click', () =>
+  guard(async () => {
+    const split = (v) => v.split(/[\n,，;；]+/).map((s) => s.trim()).filter(Boolean);
+    const proxyHosts = split($('in-proxy-hosts').value);
+    const directHosts = split($('in-direct-hosts').value);
+    await api('/config', { proxyHosts, directHosts });
     forceSync();
     await refresh();
   })
@@ -895,7 +948,6 @@ for (const id of ['src-online', 'src-local']) {
     })
   );
 }
-
 $('in-online-interval').addEventListener('change', () =>
   guard(async () => {
     const hours = Number($('in-online-interval').value);
@@ -1208,14 +1260,38 @@ $('btn-portal').addEventListener('click', () => guard(openPortal));
 $('portal-ok').addEventListener('click', () => closeModal($('portal')));
 $('portal-x').addEventListener('click', () => closeModal($('portal')));
 
-function openOnlineRules() {
-  closeTips();
-  const o = lastStatus?.online || {};
-  $('in-online-url').value = (Array.isArray(o.urls) ? o.urls : []).join('\n');
-  openModal($('online-modal'));
-  setTimeout(() => $('in-online-url').focus(), 60);
+/* ---------- 分流规则弹窗：两个标签页 ---------- */
+/** 切到指定标签页（custom / online） */
+function selectTab(name) {
+  const target = name === 'online' ? 'online' : 'custom';
+  for (const btn of document.querySelectorAll('#online-modal .tab')) {
+    const on = btn.dataset.pane === target;
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    btn.classList.toggle('active', on);
+  }
+  $('pane-custom').hidden = target !== 'custom';
+  $('pane-online').hidden = target !== 'online';
 }
-$('btn-online-open').addEventListener('click', openOnlineRules);
+
+function openRules(tab) {
+  closeTips();
+  const st = lastStatus || {};
+  // 自定义规则框：打开时一律以服务端为准（未保存的改动丢弃，避免带着上一次的脏值进来）
+  $('in-proxy-hosts').value = (st.config?.proxyHosts || []).join('\n');
+  $('in-direct-hosts').value = (st.config?.directHosts || []).join('\n');
+  dirtyFields.clear();
+  syncDirtyUI();
+  $('in-online-url').value = (st.online?.urls || []).join('\n');
+  selectTab(tab);
+  openModal($('online-modal'));
+  const focusId = tab === 'online' ? 'in-online-url' : 'in-proxy-hosts';
+  setTimeout(() => $(focusId).focus(), 60);
+}
+
+for (const btn of document.querySelectorAll('#online-modal .tab')) {
+  btn.addEventListener('click', () => selectTab(btn.dataset.pane));
+}
+$('btn-rules-open').addEventListener('click', () => openRules('custom'));
 $('online-ok').addEventListener('click', () => closeModal($('online-modal')));
 $('online-x').addEventListener('click', () => closeModal($('online-modal')));
 

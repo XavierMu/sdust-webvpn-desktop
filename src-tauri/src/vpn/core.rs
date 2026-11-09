@@ -722,6 +722,9 @@ impl Core {
         let remote = self.cached_remote_rules();
         // 系统代理现在到底是不是我们接管的（别人也会写同一个注册表键）
         let (owner, owner_detail) = sysproxy::owner(&sys, self.proxy_port(), &self.pac_url());
+        // 真正生效的名单（在线 + 本地，本地黑名单优先）：界面「分流规则」卡只读展示它，
+        // 用户改名单要去弹窗，卡片上不再有编辑框
+        let (eff_proxy, eff_direct) = effective_lists(&self.cfg.lock(), remote.as_ref());
         json!({
             "session": self.session.status_json(),
             "proxy": {
@@ -740,6 +743,18 @@ impl Core {
             "ca": {
                 "installed": self.ca_installed(false),
                 "path": self.ca.cert_file().to_string_lossy(),
+            },
+            "rules": {
+                // 合并后真正生效的名单（在线在前、本地补后；本地黑名单仍优先）
+                "effectiveProxy": eff_proxy,
+                "effectiveDirect": eff_direct,
+                // 各自的来源条数，卡片上加一句「在线 10 + 本地 2」这类标识
+                "localProxy": self.cfg.lock().proxy_hosts.len(),
+                "localDirect": self.cfg.lock().direct_hosts.len(),
+                "onlineProxy": remote.as_ref().map(|r| r.proxy.len()).unwrap_or(0),
+                "onlineDirect": remote.as_ref().map(|r| r.direct.len()).unwrap_or(0),
+                "onlineActive": self.online_active(),
+                "global": self.cfg.lock().sysproxy_mode == "global",
             },
             "config": {
                 "controlPort": self.control_port.load(Ordering::Relaxed),

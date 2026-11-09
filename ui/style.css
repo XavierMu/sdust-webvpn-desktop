@@ -322,6 +322,22 @@ main {
   font-size: 11.5px;
 }
 
+/* 提示里用条目式，别堆成一大段 */
+.tip-list {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 5px;
+}
+
+.tip-list li {
+  line-height: 1.6;
+}
+
+.tip-list code {
+  font-size: 11.5px;
+}
+
 /* 说明较长的提示（在线规则）给宽一点，少占垂直空间 */
 .tip-bubble.wide {
   width: 400px;
@@ -1216,22 +1232,19 @@ body.modal-open {
   white-space: nowrap;
 }
 
-/* 弹窗里：操作按钮一行（大小一致），选项另起一行 */
+/* 弹窗里：操作按钮一行（大小一致），自动同步的下拉框跟在后面同一行 */
 .online-actions {
   gap: 8px;
+  align-items: center;
 }
 
-.online-opts {
-  margin-top: 10px;
-  gap: 10px 14px;
-}
-
-.online-opts .radio {
+.online-interval {
+  margin-left: 6px;
   white-space: nowrap;
 }
 
 /* 「自动同步」的下拉框按内容宽度，别撑满整行 */
-.online-opts select {
+.online-interval select {
   width: auto;
   min-width: 104px;
 }
@@ -1281,6 +1294,116 @@ body.modal-open {
   white-space: pre;
   word-break: normal;
   color: var(--text);
+}
+
+/* ---- 分流规则：卡片里的只读名单 ---- */
+.field-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rule-view {
+  margin: 0;
+  padding: 8px 10px;
+  min-height: 84px;
+  max-height: 132px;
+  overflow: auto;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+  word-break: normal;
+  color: var(--text);
+}
+
+.rule-view.empty {
+  color: var(--muted);
+  font-family: inherit;
+}
+
+/* 端口 + 保存按钮同一行 */
+.inline-ctrl {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-ctrl > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.inline-ctrl > button {
+  flex: 0 0 auto;
+}
+
+/* 弹窗顶部（标签页之上）的公共开关：在线名单是否参与合并 */
+.rule-source-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+
+.rule-source-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rule-source-bar .radio {
+  white-space: nowrap;
+}
+
+.rule-source-bar #rule-source-hint {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 弹窗标签页 ---- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--text);
+  border-bottom-color: var(--border-strong);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab-pane[hidden] {
+  display: none;
 }
 
 #portal-list.portal-list {

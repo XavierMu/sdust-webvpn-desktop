@@ -70,10 +70,13 @@
                 <option value="global">全局 — 全部走 WebVPN</option>
               </select>
             </label>
-            <label class="field" for="in-port">
+            <div class="field">
               <span>本地端口</span>
-              <input id="in-port" type="number" min="1024" max="65535" step="1" value="8899" />
-            </label>
+              <span class="inline-ctrl">
+                <input id="in-port" type="number" min="1024" max="65535" step="1" value="8899" />
+                <button id="btn-save" class="ghost" title="保存端口等连接设置">保存</button>
+              </span>
+            </div>
           </div>
 
           <div class="divider"></div>
@@ -96,27 +99,26 @@
               <button id="rules-tip" class="dot-warn" type="button"
                 aria-label="分流规则说明" aria-describedby="rules-tip-text">!</button>
               <span class="tip-bubble" id="rules-tip-text" role="tooltip">
-                分流规则决定每个请求走哪条路：命中<b>白名单</b>的走 WebVPN（这样就能用校内原始地址访问），
-                命中<b>黑名单</b>的强制直连，两个都没命中的也是直连 —— <b>黑名单优先</b>，
-                所以「直连」的结论不会被白名单推翻。新装已经自带一份默认白名单：学校域名、几个内网地址段，
-                以及校内订阅的校外资费资源（知网、超星电子书、国研网、IEEE Xplore）；
-                公共规则另有默认订阅（见卡片右下角的「在线规则…」），所以这里主要是补自己的例外。
-                实际使用中，各校内站点、局域网服务、学术数据库应走 WebVPN 还是直连，
-                往往需要试用后逐个确认，并把结论补进下面两个名单（黑名单优先）。
+                <ul class="tip-list">
+                  <li>这里是<b>实际生效的名单</b>，只读；括号里是条数。</li>
+                  <li>命中<b>白名单</b>走 WebVPN，命中<b>黑名单</b>直连，都没命中也是直连。</li>
+                  <li><b>黑名单优先</b>于白名单，也优先于在线规则。</li>
+                  <li>名单 = 自定义规则 + 在线规则；左下角是各自条数。</li>
+                  <li>改名单点「编辑规则…」；弹窗顶部可一键关掉在线名单。</li>
+                  <li>拿不准某个站点该走哪边，试用后把结论补进自定义名单。</li>
+                </ul>
               </span>
             </span>
             <span class="tag" id="rules-mode-badge">按名单分流</span>
           </div>
           <div class="grid2">
             <div class="field">
-              <label for="in-proxy-hosts">白名单 · 走 WebVPN</label>
-              <textarea id="in-proxy-hosts" rows="3" spellcheck="false"
-                placeholder="sdust.edu.cn&#10;10.0.0.0/8"></textarea>
+              <span class="field-head">白名单 · 走 WebVPN<span class="muted small" id="rules-proxy-n"></span></span>
+              <pre class="rule-view" id="rules-proxy">—</pre>
             </div>
             <div class="field">
-              <label for="in-direct-hosts">黑名单 · 直连（优先）</label>
-              <textarea id="in-direct-hosts" rows="3" spellcheck="false"
-                placeholder="www.baidu.com&#10;8.8.8.8/32"></textarea>
+              <span class="field-head">黑名单 · 直连（优先）<span class="muted small" id="rules-direct-n"></span></span>
+              <pre class="rule-view" id="rules-direct">—</pre>
             </div>
           </div>
           <p class="hint muted">
@@ -126,14 +128,12 @@
 
           <div class="row between save-row card-foot">
             <div class="action-group">
-              <button id="btn-save" class="primary">保存</button>
-              <button id="btn-reset" class="ghost" hidden>放弃修改</button>
-              <span class="tag warn" id="dirty-hint" hidden>未保存</span>
+              <span class="muted small" id="rules-source-note">在线 10 + 本地 2</span>
             </div>
             <div class="action-group online-status">
               <span class="tag" id="online-badge">未启用</span>
               <span class="muted small" id="online-meta"></span>
-              <button id="btn-online-open" class="ghost">在线规则…</button>
+              <button id="btn-rules-open" class="ghost">编辑规则…</button>
             </div>
           </div>
         </section>
@@ -499,13 +499,14 @@
                   都没有更新的才用先拿到的那份保底</li>
                 <li>内置规则地址<b>第一条改成 raw 原始地址</b>（没有 CDN 缓存，改完规则立刻生效），
                   jsDelivr 两条退到后面兜底；没动过地址框的老配置会自动换成新顺序，自己改过的不动</li>
-                <li><b>界面</b>：「在线规则…」弹窗里三个按钮统一大小、单独一行，选项另起一行；
-                  「分流规则」卡右下角的状态改成一行排开、过长省略（悬停看完整信息），同步完成后不会再挤乱</li>
+                <li><b>界面</b>：「分流规则」卡改成<b>只读</b>显示合并后真正生效的名单（在线 + 本地，
+                  标注来源条数），弹窗分成「自定义规则」「在线规则」两个标签页；端口保存按钮挪到
+                  「连接」卡的端口旁边。原先在线规则弹窗里三个按钮大小不一、选项挤成一行的问题一并修掉</li>
                 <li><b>看得见的同步</b>：启动后几秒就自动同步一次（原来要等 20 秒），期间状态徽标显示
                   「同步中…」、两个同步按钮暂时禁用；启动日志会写明下一次什么时候同步</li>
                 <li>「在线规则…」弹窗底部新增<b>「当前在线规则内容」</b>，直接列出刚从订阅地址取回的白/黑名单条目
                   （缓存在 <code>state\online_rules.json</code>），不用再翻配置文件</li>
-                <li>弹窗里那段长篇说明收进标题旁的<b>红色感叹号提示</b>（点一下钉住、ESC 收起），不再占版面</li>
+                <li>两处红色感叹号提示（分流规则 / 在线规则）：长说明收进气泡，点一下钉住、ESC 收起，不再占版面</li>
                 <li>版本号 0.4.0 → 0.4.1；单测 42 → 47</li>
               </ul>
             </section>
@@ -603,68 +604,109 @@
       </div>
     </div>
 
-    <!-- 在线分流规则 -->
+    <!-- 分流规则（自定义 + 在线，两个标签页） -->
     <div id="online-modal" class="overlay" hidden>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="online-title">
+      <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="online-title">
         <div class="modal-head">
-          <h3 id="online-title">在线分流规则</h3>
+          <h3 id="online-title">分流规则</h3>
           <span class="tip-wrap">
             <button id="online-tip" class="dot-warn" type="button"
-              aria-label="在线规则说明" aria-describedby="online-note">!</button>
+              aria-label="分流规则说明" aria-describedby="online-note">!</button>
             <span class="tip-bubble wide" id="online-note" role="tooltip">
-              默认填的是公共规则（GitHub 上的 <code>sdust-webvpn-rules</code>）：第一条是 raw 原始地址
-              （没有 CDN 缓存，改完规则立刻生效），后面两条是 jsDelivr 镜像兜底。
-              把这里清空就只用本地名单。填多个地址时按顺序尝试，前面那条拉不动就自动换下一条。
-              拉下来的条目排在本地名单前面，本地黑名单仍然优先。远端版本比本地缓存旧、或者版本号跟本地一样时，
-              都会先试后面的地址，都没有更新的才用先拿到的那份；确实要用旧版覆盖就点「强制同步」。
-              自动同步按上面的间隔在后台进行（程序启动几秒后会先同步一次，来不及看日志时，
-              底部「当前在线规则内容」就是同步结果），拉不到会保留上一次成功的规则。
+              <ul class="tip-list">
+                <li><b>自定义规则</b>是本机配置（<code>state\config.json</code>）；<b>在线规则</b>按间隔从订阅地址拉取。</li>
+                <li>两者合并后生效；<b>自定义黑名单优先于一切</b>。</li>
+                <li>顶部开关关掉在线名单后，订阅仍会同步，但不参与分流。</li>
+                <li>地址一行一个，按顺序试；打不开或版本不比本地新就换下一条。</li>
+                <li>全部失败会保留上一次成功的规则；要用旧版覆盖点「强制同步」。</li>
+              </ul>
             </span>
           </span>
           <span class="tag" id="online-modal-badge">未启用</span>
           <span class="spacer"></span>
           <button id="online-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
         </div>
-        <div class="modal-body">
-          <label class="field">
-            <span>规则文件地址（一行一个，按顺序尝试；前面的打不开或内容更旧就用后面的）</span>
-            <textarea id="in-online-url" rows="4" spellcheck="false" autocomplete="off"
-              placeholder="https://example.com/sdust-rules.json"></textarea>
-          </label>
-          <div class="row wrap online-actions">
-            <button id="btn-online-sync" class="ghost">立即同步</button>
-            <button id="btn-online-force" class="ghost"
-              title="忽略版本检查，用远端内容覆盖本地缓存">强制同步</button>
-            <button id="btn-online-clear" class="ghost" hidden>清除缓存</button>
-          </div>
-          <div class="row wrap online-opts">
-            <label class="radio"><input type="radio" name="rule-source" id="src-online" value="online" /> 在线 + 本地合并</label>
-            <label class="radio"><input type="radio" name="rule-source" id="src-local" value="local" /> 只用本地名单</label>
-            <label class="radio inline-gap">
-              <span class="muted">自动同步</span>
-              <select id="in-online-interval">
-                <option value="0">关闭</option>
-                <option value="6">每 6 小时</option>
-                <option value="24">每天</option>
-                <option value="168">每周</option>
-              </select>
-            </label>
-          </div>
-          <p class="hint muted" id="online-modal-meta"></p>
-          <details class="online-remote" id="online-remote" open>
-            <summary>当前在线规则内容<span class="muted small" id="online-remote-sum"></span></summary>
-            <div class="online-remote-sec">
-              <div class="online-remote-head">白名单 · 走 WebVPN<span class="muted small" id="online-remote-proxy-n"></span></div>
-              <pre class="online-remote-list" id="online-remote-proxy">—</pre>
-            </div>
-            <div class="online-remote-sec">
-              <div class="online-remote-head">黑名单 · 强制直连<span class="muted small" id="online-remote-direct-n"></span></div>
-              <pre class="online-remote-list" id="online-remote-direct">—</pre>
-            </div>
-            <p class="hint muted">这里是刚从订阅地址取回来的那份（缓存在本地 <code>state\online_rules.json</code>）。
-              它和上面的本地名单合并后才是最终生效的分流结果，本地黑名单优先。</p>
-          </details>
+
+        <!-- 顶部公共开关：在线名单是否参与合并（两个标签页都受它影响） -->
+        <div class="rule-source-bar">
+          <span class="rule-source-label">在线名单</span>
+          <label class="radio"><input type="radio" name="rule-source" id="src-online" value="online" /> 参与合并</label>
+          <label class="radio"><input type="radio" name="rule-source" id="src-local" value="local" /> 不参与（只用自定义）</label>
+          <span class="muted small" id="rule-source-hint"></span>
         </div>
+
+        <div class="tabs" role="tablist">
+          <button id="tab-custom" class="tab" role="tab" aria-selected="true"
+            aria-controls="pane-custom" data-pane="custom">自定义规则</button>
+          <button id="tab-online" class="tab" role="tab" aria-selected="false"
+            aria-controls="pane-online" data-pane="online">在线规则</button>
+        </div>
+
+        <div class="modal-body">
+          <!-- 标签页 1：自定义规则 -->
+          <div id="pane-custom" class="tab-pane" role="tabpanel" aria-labelledby="tab-custom">
+            <div class="grid2">
+              <div class="field">
+                <label for="in-proxy-hosts">白名单 · 走 WebVPN</label>
+                <textarea id="in-proxy-hosts" rows="7" spellcheck="false"></textarea>
+              </div>
+              <div class="field">
+                <label for="in-direct-hosts">黑名单 · 直连（优先）</label>
+                <textarea id="in-direct-hosts" rows="7" spellcheck="false"></textarea>
+              </div>
+            </div>
+            <p class="hint muted">
+              <code>sdust.edu.cn</code> 含子域 · <code>10.0.0.0/8</code> 网段 · <code>192.168.1.5</code> 单个 IP ·
+              <code>*</code> 全部主机。黑名单优先于白名单，也优先于在线规则；保存后立即生效。
+            </p>
+            <div class="row between">
+              <div class="action-group">
+                <button id="btn-rules-save" class="primary">保存</button>
+                <button id="btn-reset" class="ghost" hidden>放弃修改</button>
+                <span class="tag warn" id="dirty-hint" hidden>未保存</span>
+              </div>
+              <span class="muted small" id="rules-local-count"></span>
+            </div>
+          </div>
+
+          <!-- 标签页 2：在线规则 -->
+          <div id="pane-online" class="tab-pane" role="tabpanel" aria-labelledby="tab-online" hidden>
+            <label class="field">
+              <span>规则文件地址（一行一个，按顺序尝试；前面的打不开或内容更旧就用后面的）</span>
+              <textarea id="in-online-url" rows="4" spellcheck="false" autocomplete="off"></textarea>
+            </label>
+            <div class="row wrap online-actions">
+              <button id="btn-online-sync" class="ghost">立即同步</button>
+              <button id="btn-online-force" class="ghost"
+                title="忽略版本检查，用远端内容覆盖本地缓存">强制同步</button>
+              <button id="btn-online-clear" class="ghost" hidden>清除缓存</button>
+              <label class="radio inline-gap online-interval">
+                <span class="muted">自动同步</span>
+                <select id="in-online-interval">
+                  <option value="0">关闭</option>
+                  <option value="6">每 6 小时</option>
+                  <option value="24">每天</option>
+                  <option value="168">每周</option>
+                </select>
+              </label>
+            </div>
+            <p class="hint muted" id="online-modal-meta"></p>
+            <details class="online-remote" id="online-remote">
+              <summary>当前在线规则内容<span class="muted small" id="online-remote-sum"></span></summary>
+              <div class="online-remote-sec">
+                <div class="online-remote-head">白名单 · 走 WebVPN<span class="muted small" id="online-remote-proxy-n"></span></div>
+                <pre class="online-remote-list" id="online-remote-proxy">—</pre>
+              </div>
+              <div class="online-remote-sec">
+                <div class="online-remote-head">黑名单 · 强制直连<span class="muted small" id="online-remote-direct-n"></span></div>
+                <pre class="online-remote-list" id="online-remote-direct">—</pre>
+              </div>
+              <p class="hint muted">这里是刚从订阅地址取回来的那份（缓存在本地 <code>state\online_rules.json</code>）。
+                它和「自定义规则」合并后才是最终生效的分流结果，自定义黑名单优先。</p>
+            </details>
+          </div>
+        </div>
+
         <div class="modal-foot">
           <button id="online-ok" class="primary">关闭</button>
         </div>
