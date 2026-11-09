@@ -186,7 +186,7 @@ impl Core {
     /// 在线规则占的优先程度：`local` 表示只用本地名单，其余（默认 `online`）叠加在线规则。
     fn online_active(&self) -> bool {
         let cfg = self.cfg.lock();
-        !cfg.online_url.trim().is_empty() && cfg.rule_source != "local"
+        !cfg.online_urls_clean().is_empty() && cfg.rule_source != "local"
     }
 
     /// 当前生效的在线规则（读每次同步时落盘的那份；没有/坏了就当空）
@@ -199,35 +199,84 @@ impl Core {
     }
 
     /// 拉一次在线规则：成功后落盘、更新状态字段，并重建规则（立刻生效）。
-    pub async fn sync_online_rules(self: &Arc<Self>) -> Result<online::RemoteRules, String> {
-        let url = self.cfg.lock().online_url.trim().to_string();
-        if url.is_empty() {
+    ///
+    /// 配了多个地址时按顺序试，只要有一份能解析出条目就停；全都失败才报错
+    /// （错误里带上每个地址各自的原因）。`force` 关掉「远端比本地旧就拒绝」的检查。
+    pub async fn sync_online_rules(
+        self: &Arc<Self>,
+        force: bool,
+    ) -> Result<online::RemoteRules, String> {
+        let urls = self.cfg.lock().online_urls_clean();
+        if urls.is_empty() {
             return Err("还没有填在线规则的网址".into());
         }
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err("网址要以 http:// 或 https:// 开头".into());
+        let prev_rev = self.cfg.lock().online_revision;
+
+        // 一个地址失败就记一条，继续试下一个；最后一起报出来才知道是哪条路的问题
+        let mut errors: Vec<String> = Vec::new();
+        let mut fetched: Option<(String, String, &'static str, online::RemoteRules)> = None;
+        for url in &urls {
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                errors.push(format!("{url} → 网址要以 http:// 或 https:// 开头"));
+                continue;
+            }
+            let (body, via) = match self.fetch_rule_body(url).await {
+                Ok(x) => x,
+                Err(e) => {
+                    errors.push(format!("{url} → {e}"));
+                    continue;
+                }
+            };
+            let rules = match online::parse(&body) {
+                Ok(r) => r,
+                Err(e) => {
+                    errors.push(format!("{url} → {e}"));
+                    continue;
+                }
+            };
+            // 远端版本比本地缓存旧：可能是 CDN 还在发旧文件（jsDelivr 有缓存），
+            // 也可能对面误回滚。跳过这个地址，让后面的镜像有机会给出新版本。
+            if !force {
+                if let Some(rev) = online::revision(&rules) {
+                    if prev_rev > 0 && rev < prev_rev {
+                        errors.push(format!(
+                            "{url} → 远端版本 {rev} 比本地缓存的 {prev_rev} 旧，已跳过（要强行覆盖请用「强制同步」）"
+                        ));
+                        continue;
+                    }
+                }
+            }
+            fetched = Some((url.clone(), body, via, rules));
+            break;
         }
-        // 走本机自己的代理，这样学校门户型地址也能拉；拉不动再退回直连。
-        let (body, via) = self.fetch_rule_body(&url).await?;
-        let rules = match online::parse(&body) {
-            Ok(r) => r,
-            Err(e) => {
-                self.cfg.lock().online_error = e.clone();
-                self.cfg.lock().save(&self.paths);
-                return Err(e);
+
+        let (url, body, via, rules) = match fetched {
+            Some(x) => x,
+            None => {
+                let msg = errors.join("；");
+                let mut cfg = self.cfg.lock();
+                cfg.online_error = msg.clone();
+                cfg.save(&self.paths);
+                return Err(msg);
             }
         };
+
         std::fs::write(self.paths.online_rules(), &body).ok();
         {
             let mut cfg = self.cfg.lock();
             cfg.online_synced_at = now_secs();
             cfg.online_count = rules.total() as u64;
+            cfg.online_last_url = url.clone();
+            // 远端没给版本号时不要清零：保留上一次的判据，否则防回滚会失效
+            if let Some(rev) = online::revision(&rules) {
+                cfg.online_revision = rev;
+            }
             cfg.online_error.clear();
             cfg.save(&self.paths);
         }
         self.rebuild_rules();
         self.log(format!(
-            "在线规则已同步（{} 条，经{via}）：白名单 +{} / 黑名单 +{}",
+            "在线规则已同步（{} 条，经{via}，来自 {url}）：白名单 +{} / 黑名单 +{}",
             rules.total(),
             rules.proxy.len(),
             rules.direct.len()
@@ -235,43 +284,64 @@ impl Core {
         Ok(rules)
     }
 
-    /// 取远端规则正文：先直连（规则源通常在外网），失败再借本机代理试一次。
+    /// 取远端规则正文。
+    ///
+    /// 两条路的差别只对「命中白名单的地址」存在：那种请求进本机代理后会被改写成
+    /// WebVPN 路径，才算真的另一条出口，所以先走代理、不行再直连。
+    /// 站外地址则相反 —— 本机代理对它也是直连出去，同一个出口试两遍只是白等 20 秒，
+    /// 所以只试一次。
     async fn fetch_rule_body(&self, url: &str) -> Result<(String, &'static str), String> {
-        let plain = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .build()
-            .map_err(|e| e.to_string())?;
-        let res = plain.get(url).send().await;
-        let (res, via) = match res {
-            Ok(r) => (Ok(r), "直连"),
-            Err(direct_err) => {
-                let proxy = reqwest::Proxy::all(format!("http://127.0.0.1:{}", self.proxy_port()))
-                    .map_err(|e| e.to_string())?;
-                let c = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(20))
-                    .proxy(proxy)
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                if c.get(url).send().await.is_err() {
-                    // 两条路都不通时，把直连的错带出去，比"代理也失败"更好定位
-                    self.log(format!("直连拉取规则失败：{direct_err}"));
-                }
-                (c.get(url).send().await, "本机代理")
-            }
+        let host = reqwest::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_string()))
+            .unwrap_or_default();
+        let proxied = !host.is_empty()
+            && self.rules.read().decide(&host) == super::rules::Decision::Proxy;
+        let modes: &[&str] = if proxied {
+            &["proxy", "direct"]
+        } else {
+            &["direct"]
         };
-        let res = res.map_err(|e| {
-            let mut t = e.to_string();
-            t.truncate(t.find(" for url").unwrap_or(t.len().min(90)));
-            format!("拉取失败：{t}")
-        })?;
-        if !res.status().is_success() {
-            return Err(format!("拉取失败：HTTP {}", res.status()));
+
+        let mut errors: Vec<String> = Vec::new();
+        for mode in modes {
+            let via = if *mode == "proxy" { "本机代理" } else { "直连" };
+            let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(20));
+            let builder = if *mode == "proxy" {
+                match reqwest::Proxy::all(format!("http://127.0.0.1:{}", self.proxy_port())) {
+                    Ok(p) => builder.proxy(p),
+                    Err(e) => {
+                        errors.push(format!("经本机代理失败：{e}"));
+                        continue;
+                    }
+                }
+            } else {
+                builder
+            };
+            let client = match builder.build() {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("经{via}失败：{e}"));
+                    continue;
+                }
+            };
+            match client.get(url).send().await {
+                Ok(res) if res.status().is_success() => {
+                    let text = res.text().await.map_err(|e| format!("读取失败：{e}"))?;
+                    if text.len() > online::MAX_BYTES {
+                        return Err(format!("规则文件太大（{} 字节）", text.len()));
+                    }
+                    return Ok((text, via));
+                }
+                Ok(res) => errors.push(format!("经{via}返回 HTTP {}", res.status())),
+                Err(e) => {
+                    let mut t = e.to_string();
+                    t.truncate(t.find(" for url").unwrap_or(t.len().min(90)));
+                    errors.push(format!("经{via}失败：{t}"));
+                }
+            }
         }
-        let text = res.text().await.map_err(|e| format!("读取失败：{e}"))?;
-        if text.len() > online::MAX_BYTES {
-            return Err(format!("规则文件太大（{} 字节）", text.len()));
-        }
-        Ok((text, via))
+        Err(format!("拉取失败：{}", errors.join("；")))
     }
 
     /// 定期同步：按 `online_interval_hours` 排一次，0 表示不自动同步。
@@ -284,13 +354,16 @@ impl Core {
         // Core::new 是同步构造、跑在主线程上，此时还没有 Tokio reactor，	okio::spawn 会 panic；
         // tauri::async_runtime 有全局运行时，从任何线程调都安全。
         *guard = Some(tauri::async_runtime::spawn(async move {
+            // 先等一会儿让界面和代理起来，第一次同步不用等满 10 分钟的 tick
+            // （新装用户内置了默认规则地址，这一步就是「开箱即有规则」）
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(10 * 60)).await;
-                let (hours, url) = {
+                let (hours, urls) = {
                     let cfg = core.cfg.lock();
-                    (cfg.online_interval_hours, cfg.online_url.clone())
+                    (cfg.online_interval_hours, cfg.online_urls_clean())
                 };
-                if hours == 0 || url.trim().is_empty() || !core.online_active() {
+                if hours == 0 || urls.is_empty() || !core.online_active() {
+                    tokio::time::sleep(std::time::Duration::from_secs(10 * 60)).await;
                     continue;
                 }
                 let due = {
@@ -298,10 +371,12 @@ impl Core {
                     cfg.online_synced_at + hours * 3600
                 };
                 if now_secs() >= due {
-                    if let Err(e) = core.sync_online_rules().await {
+                    // 自动同步按时间到点就跑，不强制覆盖：远端版本比本地旧时宁可留着旧的
+                    if let Err(e) = core.sync_online_rules(false).await {
                         core.log(format!("自动同步在线规则失败：{e}"));
                     }
                 }
+                tokio::time::sleep(std::time::Duration::from_secs(10 * 60)).await;
             }
         }));
     }
@@ -630,11 +705,13 @@ impl Core {
                 "builtAt": self.built_at(),
             },
             "online": {
-                "url": self.cfg.lock().online_url,
+                "urls": self.cfg.lock().online_urls_clean(),
+                "lastUrl": self.cfg.lock().online_last_url,
                 "source": self.cfg.lock().rule_source,
                 "intervalHours": self.cfg.lock().online_interval_hours,
                 "syncedAt": self.cfg.lock().online_synced_at,
                 "count": self.cfg.lock().online_count,
+                "revision": self.cfg.lock().online_revision,
                 "error": self.cfg.lock().online_error,
                 "active": self.online_active(),
                 "remoteProxy": remote.as_ref().map(|r| r.proxy.len()).unwrap_or(0),
@@ -748,7 +825,7 @@ fn effective_lists(
     remote: Option<&online::RemoteRules>,
 ) -> (Vec<String>, Vec<String>) {
     match remote {
-        Some(r) if !cfg.online_url.trim().is_empty() && cfg.rule_source != "local" => {
+        Some(r) if !cfg.online_urls_clean().is_empty() && cfg.rule_source != "local" => {
             online::merge(r, &cfg.proxy_hosts, &cfg.direct_hosts)
         }
         _ => (cfg.proxy_hosts.clone(), cfg.direct_hosts.clone()),
@@ -944,10 +1021,27 @@ async fn s_config(State(core): CoreState, body: Bytes) -> Json<serde_json::Value
     }
     // ---- 在线规则 / 校内导航 ----
     let mut rules_changed = false;
-    if let Some(url) = v.get("onlineUrl").and_then(|x| x.as_str()) {
-        let url = url.trim().to_string();
-        if url != core.cfg.lock().online_url {
-            core.cfg.lock().online_url = url;
+    // 界面发的是数组（一行一个地址）；`onlineUrl` 是旧版单地址字段，留着兼容外部脚本
+    let new_urls: Option<Vec<String>> = match v.get("onlineUrls").and_then(|x| x.as_array()) {
+        Some(arr) => Some(
+            arr.iter()
+                .filter_map(|x| x.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+        ),
+        None => v.get("onlineUrl").and_then(|x| x.as_str()).map(|s| {
+            let s = s.trim();
+            if s.is_empty() {
+                Vec::new()
+            } else {
+                vec![s.to_string()]
+            }
+        }),
+    };
+    if let Some(urls) = new_urls {
+        if urls != core.cfg.lock().online_urls_clean() {
+            core.cfg.lock().online_urls = urls;
             rules_changed = true;
         }
     }
@@ -1042,24 +1136,28 @@ async fn s_config(State(core): CoreState, body: Bytes) -> Json<serde_json::Value
         "sysproxyMode": core.cfg.lock().sysproxy_mode.clone(),
         "envProxy": core.cfg.lock().env_proxy,
         "guideSeen": core.cfg.lock().guide_seen,
-        "onlineUrl": core.cfg.lock().online_url,
+        "onlineUrls": core.cfg.lock().online_urls_clean(),
         "ruleSource": core.cfg.lock().rule_source,
     }))
 }
 
-/// 在线规则：`{"action":"sync"}` 立刻拉一次；`{"action":"clear"}` 清掉已缓存的在线规则。
+/// 在线规则：`{"action":"sync"}` 立刻拉一次（`{"force":true}` 忽略版本检查）；
+/// `{"action":"clear"}` 清掉已缓存的在线规则。
 async fn s_online(State(core): CoreState, body: Bytes) -> Json<serde_json::Value> {
     let v = parse_body(&body);
     let action = body_str(&v, "action");
+    let force = body_bool(&v, "force");
     match action.as_str() {
-        "sync" | "" => match core.sync_online_rules().await {
+        "sync" | "" => match core.sync_online_rules(force).await {
             Ok(r) => Json(json!({
                 "ok": true,
                 "name": r.name,
                 "updated": r.updated,
+                "version": r.version,
                 "proxy": r.proxy.len(),
                 "direct": r.direct.len(),
                 "total": r.total(),
+                "url": core.cfg.lock().online_last_url,
             })),
             Err(e) => Json(json!({ "error": e })),
         },
@@ -1069,6 +1167,9 @@ async fn s_online(State(core): CoreState, body: Bytes) -> Json<serde_json::Value
                 let mut cfg = core.cfg.lock();
                 cfg.online_count = 0;
                 cfg.online_synced_at = 0;
+                // 连版本判据一起清掉，否则「清除缓存」之后反而再也同步不回同一个版本
+                cfg.online_revision = 0;
+                cfg.online_last_url.clear();
                 cfg.online_error.clear();
                 cfg.save(&core.paths);
             }

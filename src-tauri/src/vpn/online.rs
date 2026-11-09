@@ -6,11 +6,14 @@
 //!    ```json
 //!    {
 //!      "name": "SDUST 校内站点公共规则",
-//!      "updated": "2026-10-31",
+//!      "updated": "2026-11-09",
+//!      "version": 3,
 //!      "proxy": ["sdust.edu.cn", "10.0.0.0/8", "*.cnki.net"],
 //!      "direct": ["zhfw.sdust.edu.cn"]
 //!    }
 //!    ```
+//!    `version` 可省；省略时用 `updated` 里的日期判断新旧，防止远端被回滚成旧版
+//!    （见 `revision`）。
 //! 2. JSON 其它字段名也认：`whitelist` / `blacklist`、`proxyHosts` / `directHosts`、
 //!    或者 Clash 风格的 `{ "payload": [...] }`（按白名单处理）。
 //! 3. 纯文本：一行一条，# 开头是注释；`[proxy]` / `[direct]` 段标记切换归属，
@@ -32,6 +35,9 @@ pub struct RemoteRules {
     pub name: String,
     #[serde(default)]
     pub updated: String,
+    /// 可选的递增版本号；没有时用 `updated` 当判据（见 `revision`）
+    #[serde(default)]
+    pub version: Option<u64>,
     #[serde(default)]
     pub proxy: Vec<String>,
     #[serde(default)]
@@ -41,6 +47,28 @@ pub struct RemoteRules {
 impl RemoteRules {
     pub fn total(&self) -> usize {
         self.proxy.len() + self.direct.len()
+    }
+}
+
+/// 远端规则的「新旧」判据：优先用数字 `version`，没有就把 `updated` 里的数字当
+/// `YYYYMMDD` 用（`2026-11-09` / `2026/11/09` / `20261109` 都认）。
+///
+/// 两者都拿不到就返回 `None`，调用方据此**跳过**回滚判断 —— 宁可多同步一次，
+/// 也不要因为对方没写日期就卡住用户的规则源。
+pub fn revision(r: &RemoteRules) -> Option<u64> {
+    if let Some(v) = r.version {
+        return Some(v);
+    }
+    let digits: String = r.updated.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() != 8 {
+        return None;
+    }
+    let n: u64 = digits.parse().ok()?;
+    let (y, m, d) = (n / 10000, n / 100 % 100, n % 100);
+    if (1970..=9999).contains(&y) && (1..=12).contains(&m) && (1..=31).contains(&d) {
+        Some(n)
+    } else {
+        None
     }
 }
 
@@ -138,6 +166,10 @@ fn parse_json(body: &str) -> Result<RemoteRules, String> {
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string(),
+            version: v.get("version").and_then(|x| {
+                x.as_u64()
+                    .or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))
+            }),
             proxy: dedup(
                 find_list(
                     &v,
@@ -250,5 +282,43 @@ mod tests {
         let (p, d) = merge(&remote, &["sdust.edu.cn".into()], &[]);
         assert_eq!(p, vec!["cnki.net", "sdust.edu.cn"]);
         assert_eq!(d, vec!["zhfw.sdust.edu.cn"]);
+    }
+
+    #[test]
+    fn revision_prefers_version_field() {
+        let body = r#"{"version":"7","updated":"2026-11-09","proxy":["a.cn"]}"#;
+        assert_eq!(revision(&parse(body).unwrap()), Some(7));
+    }
+
+    #[test]
+    fn revision_falls_back_to_updated_date() {
+        for body in [
+            r#"{"updated":"2026-11-09","proxy":["a.cn"]}"#,
+            r#"{"updated":"2026/11/09","proxy":["a.cn"]}"#,
+            r#"{"updated":"20261109","proxy":["a.cn"]}"#,
+        ] {
+            assert_eq!(revision(&parse(body).unwrap()), Some(20261109), "{body}");
+        }
+    }
+
+    #[test]
+    fn revision_is_none_when_unknown() {
+        // 没写日期 / 日期残缺 → 不做回滚判断，别把用户的规则源卡死
+        assert_eq!(revision(&parse(r#"{"proxy":["a.cn"]}"#).unwrap()), None);
+        assert_eq!(
+            revision(&parse(r#"{"updated":"2026-11","proxy":["a.cn"]}"#).unwrap()),
+            None
+        );
+        assert_eq!(
+            revision(&parse(r#"{"updated":"2026-13-01","proxy":["a.cn"]}"#).unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn revision_orders_newer_above_older() {
+        let old = parse(r#"{"updated":"2026-10-31","proxy":["a.cn"]}"#).unwrap();
+        let new = parse(r#"{"updated":"2026-11-09","proxy":["a.cn"]}"#).unwrap();
+        assert!(revision(&new).unwrap() > revision(&old).unwrap());
     }
 }

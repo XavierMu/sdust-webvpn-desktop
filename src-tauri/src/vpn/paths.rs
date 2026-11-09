@@ -92,9 +92,12 @@ pub struct Config {
     /// 点了「稍后」之后，这个时间点（unix 秒）之前不再自动弹证书提示；0 = 没推迟过
     #[serde(default)]
     pub ca_prompt_snooze_until: u64,
-    /// 在线规则来源：空 = 只用本地名单；非空 = 拉这个网址的规则（用户在「分流规则」里填）
-    #[serde(default)]
-    pub online_url: String,
+    /// 在线规则地址：一行一个，按顺序尝试，前面的打不开就试后面的；空 = 只用本地名单
+    #[serde(default = "default_rule_urls")]
+    pub online_urls: Vec<String>,
+    /// 旧版单地址字段：只读，用于迁移到 `online_urls`；不再写回
+    #[serde(default, rename = "online_url", skip_serializing)]
+    pub legacy_online_url: String,
     /// 在线规则与本地名单怎么合：`online`（在线优先，本地补充）或 `local`（只认本地名单）
     #[serde(default = "default_rule_source")]
     pub rule_source: String,
@@ -106,6 +109,13 @@ pub struct Config {
     pub online_synced_at: u64,
     #[serde(default)]
     pub online_count: u64,
+    /// 最近一次成功同步用的那个地址（配了多个镜像时，用来显示实际走的哪条）
+    #[serde(default)]
+    pub online_last_url: String,
+    /// 最近一次成功同步的远端版本（数字 version，或 updated 里的 YYYYMMDD；0 = 未知）。
+    /// 下次同步拿到更小的值就拒绝覆盖，避免 CDN 缓存/误操作把规则回滚。
+    #[serde(default)]
+    pub online_revision: u64,
     /// 最近一次同步的失败原因（成功后清空）
     #[serde(default)]
     pub online_error: String,
@@ -117,6 +127,19 @@ fn default_online_interval() -> u64 {
 
 fn default_rule_source() -> String {
     "online".to_string()
+}
+
+/// 内置的公共规则地址，按顺序尝试（前面的打不开/内容比本地旧就试下一个）。
+///
+/// 规则文件托管在 GitHub 的 `sdust-webvpn-rules` 仓库，用 jsDelivr 的 CDN 取
+/// （比 `raw.githubusercontent.com` 在国内的可达性好一些），最后一条原始地址兜底。
+/// 全部失败时不动已缓存的规则 —— 也就是「拉不到就继续用上次的」。
+pub fn default_rule_urls() -> Vec<String> {
+    vec![
+        "https://fastly.jsdelivr.net/gh/XavierMu/sdust-webvpn-rules@main/rules.json".to_string(),
+        "https://cdn.jsdelivr.net/gh/XavierMu/sdust-webvpn-rules@main/rules.json".to_string(),
+        "https://raw.githubusercontent.com/XavierMu/sdust-webvpn-rules/main/rules.json".to_string(),
+    ]
 }
 
 
@@ -146,11 +169,14 @@ impl Default for Config {
             guide_seen: false,
             ca_prompt_seen: false,
             ca_prompt_snooze_until: 0,
-            online_url: String::new(),
+            online_urls: default_rule_urls(),
+            legacy_online_url: String::new(),
             rule_source: default_rule_source(),
             online_interval_hours: default_online_interval(),
             online_synced_at: 0,
             online_count: 0,
+            online_last_url: String::new(),
+            online_revision: 0,
             online_error: String::new(),
         }
     }
@@ -184,10 +210,31 @@ impl Config {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
+        // 老配置里手填的单地址：原样尊重，不再往里补默认镜像
+        cfg.migrate_online_urls();
         if cfg.rules_version < RULES_VERSION {
             cfg.migrate_rules();
         }
         cfg
+    }
+
+    /// 旧版 `online_url`（单个字符串）→ `online_urls`（列表）。
+    /// 用户当初是自己填的地址，迁移时原样保留，不掺默认镜像。
+    fn migrate_online_urls(&mut self) {
+        if !self.legacy_online_url.trim().is_empty() {
+            self.online_urls = vec![self.legacy_online_url.trim().to_string()];
+        }
+        self.legacy_online_url.clear();
+    }
+
+    /// 生效的在线规则地址：去空行、去重、保持顺序。空 = 用户关掉了在线规则。
+    pub fn online_urls_clean(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        self.online_urls
+            .iter()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty() && seen.insert(u.clone()))
+            .collect()
     }
 
     /// 迁移名单：v0（只有 `extraHosts`）→ 默认白名单 + 原来的额外域名；
@@ -215,5 +262,65 @@ impl Config {
         if let Ok(s) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(paths.config(), s);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_config_gets_builtin_rule_urls() {
+        assert_eq!(Config::default().online_urls, default_rule_urls());
+        assert!(!default_rule_urls().is_empty());
+    }
+
+    #[test]
+    fn old_single_url_wins_over_defaults() {
+        let mut cfg: Config = serde_json::from_str(r#"{"online_url":" https://my.example/r.json "}"#)
+            .expect("老配置要能读进来");
+        cfg.migrate_online_urls();
+        assert_eq!(cfg.online_urls, vec!["https://my.example/r.json"]);
+        assert!(cfg.legacy_online_url.is_empty());
+    }
+
+    #[test]
+    fn empty_old_url_keeps_defaults() {
+        let mut cfg: Config = serde_json::from_str(r#"{"online_url":""}"#).expect("要能读进来");
+        cfg.migrate_online_urls();
+        assert_eq!(cfg.online_urls, default_rule_urls());
+    }
+
+    #[test]
+    fn saved_config_does_not_write_the_legacy_field() {
+        let s = serde_json::to_string(&Config::default()).unwrap();
+        assert!(s.contains("online_urls"));
+        assert!(!s.contains("\"online_url\""));
+    }
+
+    #[test]
+    fn clean_urls_drops_blanks_and_dupes() {
+        let mut cfg = Config::default();
+        cfg.online_urls = vec![
+            "  https://a.example/r.json  ".into(),
+            String::new(),
+            "https://b.example/r.json".into(),
+            "https://a.example/r.json".into(),
+            "   ".into(),
+        ];
+        assert_eq!(
+            cfg.online_urls_clean(),
+            vec!["https://a.example/r.json", "https://b.example/r.json"]
+        );
+    }
+
+    #[test]
+    fn clearing_the_list_disables_online_rules() {
+        // 用户把多行框清空 = 明确关掉在线规则，不能再回退到默认镜像
+        let mut cfg = Config::default();
+        cfg.online_urls = Vec::new();
+        assert!(cfg.online_urls_clean().is_empty());
+        let back: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert!(back.online_urls_clean().is_empty());
     }
 }

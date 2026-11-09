@@ -336,11 +336,28 @@ function render(st) {
 }
 
 /* ---------- 在线规则 ---------- */
+/** 多行地址框 → 地址数组（一行一个，去掉空行） */
+function readOnlineUrls() {
+  return $('in-online-url')
+    .value.split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** 只留主机名，状态行里显示「实际走的是哪个镜像」用 */
+function urlHost(u) {
+  try {
+    return new URL(u).host;
+  } catch {
+    return String(u);
+  }
+}
+
 function renderOnline(online) {
-  // 网址输入框：用户正在打字就别抢
+  // 地址框：用户正在打字就别抢
   if (document.activeElement !== $('in-online-url')) {
-    const url = online.url || '';
-    if ($('in-online-url').value !== url) $('in-online-url').value = url;
+    const text = (Array.isArray(online.urls) ? online.urls : []).join('\n');
+    if ($('in-online-url').value !== text) $('in-online-url').value = text;
   }
   const src = online.source === 'local' ? 'local' : 'online';
   $('src-online').checked = src === 'online';
@@ -352,7 +369,8 @@ function renderOnline(online) {
     if ([...sel.options].some((o) => o.value === String(hours))) sel.value = String(hours);
   }
 
-  const configured = Boolean(String(online.url || '').trim());
+  const urls = (Array.isArray(online.urls) ? online.urls : []).filter((u) => String(u).trim());
+  const configured = urls.length > 0;
   const active = Boolean(online.active);
   const count = Number(online.count || 0);
   const remoteTotal = Number(online.remoteProxy || 0) + Number(online.remoteDirect || 0);
@@ -378,12 +396,15 @@ function renderOnline(online) {
   if (remoteTotal > 0) bits.push(`在线 ${remoteTotal} 条（白 ${online.remoteProxy || 0} / 黑 ${online.remoteDirect || 0}）`);
   if (online.remoteName) bits.push(String(online.remoteName));
   if (online.remoteUpdated) bits.push(`规则更新 ${online.remoteUpdated}`);
+  // 配了多个镜像才值得说「这次走的是哪个」
+  if (urls.length > 1 && online.lastUrl) bits.push(`本次走 ${urlHost(online.lastUrl)}`);
   if (online.syncedAt) bits.push(`同步于 ${fmtStamp(Number(online.syncedAt))}`);
   if (online.error) bits.push(String(online.error));
   $('online-meta').textContent = bits.join(' · ');
   $('online-modal-meta').textContent = bits.join(' · ');
   $('btn-online-clear').hidden = !(remoteTotal > 0 || count > 0);
   $('btn-online-sync').disabled = !configured;
+  $('btn-online-force').disabled = !configured;
 }
 
 /* ---------- 校内导航（内置站点清单，用各站点原始地址） ---------- */
@@ -804,16 +825,28 @@ $('btn-reset').addEventListener('click', () =>
 );
 
 /* ---------- 在线规则 ---------- */
+/** 拉一次在线规则；force=true 忽略「远端比本地旧就拒绝」的保护 */
+async function syncOnline(force) {
+  const urls = readOnlineUrls();
+  if (!urls.length) throw new Error('先填一个规则文件的地址（一行一个）');
+  const bad = urls.find((u) => !/^https?:\/\//i.test(u));
+  if (bad) throw new Error(`地址要以 http:// 或 https:// 开头：${bad}`);
+  // 先把地址存进去，不然同步的还是旧地址
+  await api('/config', { onlineUrls: urls, ruleSource: 'online' });
+  const r = await api('/online', { action: 'sync', force: Boolean(force) });
+  if (r.error) throw new Error(r.error);
+  await refresh();
+}
+
 $('btn-online-sync').addEventListener('click', () =>
   guard(async () => {
-    // 先把网址存进去，不然同步的还是旧地址
-    const url = $('in-online-url').value.trim();
-    if (!url) throw new Error('先填一个规则文件的网址');
-    if (!/^https?:\/\//i.test(url)) throw new Error('网址要以 http:// 或 https:// 开头');
-    await api('/config', { onlineUrl: url, ruleSource: 'online' });
-    const r = await api('/online', { action: 'sync' });
-    if (r.error) throw new Error(r.error);
-    await refresh();
+    await syncOnline(false);
+  })
+);
+
+$('btn-online-force').addEventListener('click', () =>
+  guard(async () => {
+    await syncOnline(true);
   })
 );
 
@@ -1148,7 +1181,7 @@ $('portal-x').addEventListener('click', () => closeModal($('portal')));
 
 function openOnlineRules() {
   const o = lastStatus?.online || {};
-  if (o.url) $('in-online-url').value = o.url;
+  $('in-online-url').value = (Array.isArray(o.urls) ? o.urls : []).join('\n');
   openModal($('online-modal'));
   setTimeout(() => $('in-online-url').focus(), 60);
 }

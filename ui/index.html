@@ -578,12 +578,15 @@
           <button id="online-x" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
-          <div class="row">
-            <input id="in-online-url" type="url" spellcheck="false" autocomplete="off"
-              placeholder="https://example.com/sdust-rules.json" aria-label="规则文件网址" />
-            <button id="btn-online-sync" class="ghost">立即同步</button>
-          </div>
+          <label class="field">
+            <span>规则文件地址（一行一个，按顺序尝试；前面的打不开或内容更旧就用后面的）</span>
+            <textarea id="in-online-url" rows="3" spellcheck="false" autocomplete="off"
+              placeholder="https://example.com/sdust-rules.json"></textarea>
+          </label>
           <div class="row wrap online-opts">
+            <button id="btn-online-sync" class="ghost">立即同步</button>
+            <button id="btn-online-force" class="ghost small-btn"
+              title="忽略版本检查，用远端内容覆盖本地缓存">强制同步</button>
             <label class="radio"><input type="radio" name="rule-source" id="src-online" value="online" /> 在线 + 本地合并</label>
             <label class="radio"><input type="radio" name="rule-source" id="src-local" value="local" /> 只用本地名单</label>
             <label class="radio inline-gap">
@@ -598,9 +601,10 @@
             <button id="btn-online-clear" class="ghost small-btn" hidden>清除缓存</button>
           </div>
           <p class="hint muted" id="online-note">
-            填一个规则文件的网址（JSON 或 <code>[proxy]</code>/<code>[direct]</code> 分段文本都行），
-            拉下来的条目排在本地名单前面，本地黑名单仍然优先。自动同步按上面的间隔在后台进行，
-            失败会保留上一次成功的规则。
+            默认填的是公共规则（GitHub 上的 <code>sdust-webvpn-rules</code>，经 jsDelivr CDN 取）。
+            把这里清空就只用本地名单。填多个地址时按顺序尝试，前面那条拉不动就自动换下一条。
+            拉下来的条目排在本地名单前面，本地黑名单仍然优先。远端版本比本地缓存旧时会拒绝覆盖，
+            确实要用旧版覆盖就点「强制同步」。自动同步按上面的间隔在后台进行，拉不到会保留上一次成功的规则。
           </p>
           <p class="hint muted" id="online-modal-meta"></p>
         </div>
