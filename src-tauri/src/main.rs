@@ -113,7 +113,7 @@ async fn start_core_impl(core: &Arc<Core>) -> Result<serde_json::Value, String> 
     // 还没保存账号（全新安装，或刚点过「清除本机账号」）不算故障：核心待命就行。
     // 在界面上填好账号密码并登录成功后，前端的轮询会自动把它拉起来。
     if !core.session.has_creds() && !core.session.logged_in() {
-        core.log("还没有保存账号，核心待命（填好账号密码并登录后会自动启动）");
+        core.log("还没有保存账号：核心待命（填好账号密码并登录后自动启动）");
         return Ok(serde_json::json!({ "running": false, "idle": true }));
     }
     let (running, port) = core.start_proxy(None).await?;
@@ -226,14 +226,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = start_core_impl(&core).await {
-                        core.log(format!("托盘开启系统代理失败：{e}"));
+                        core.log(format!("从托盘接管失败（核心没起来）：{e}"));
                         show_main(&handle);
                         return;
                     }
                     // 核心没真正跑起来（比如还没保存账号）就别接管系统代理，
                     // 否则整机流量会被指到一个什么都做不了的代理上。
                     if !core.proxy_running() {
-                        core.log("托盘开启系统代理：核心还没在跑（先打开界面填账号并登录）");
+                        core.log("没法开启系统代理：核心还没有运行（先在界面里登录）");
                         show_main(&handle);
                         return;
                     }

@@ -184,9 +184,9 @@ impl Core {
             match sysproxy::enable_pac_saved(&self.paths, &self.pac_url()) {
                 Ok(_) => {
                     self.invalidate_sys_cache();
-                    self.log("PAC 已刷新（新规则立即生效）");
+                    self.log("分流规则已生效（系统代理已按新规则刷新）");
                 }
-                Err(e) => self.log(format!("刷新 PAC 失败：{e}")),
+                Err(e) => self.log(format!("刷新系统代理失败（新规则可能暂不生效）：{e}")),
             }
         }
     }
@@ -309,9 +309,13 @@ impl Core {
             cfg.save(&self.paths);
         }
         self.rebuild_rules();
+        // 只留主机名：完整 URL 太长，界面那栏本来就挤不下
+        let from = reqwest::Url::parse(&url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_string()))
+            .unwrap_or_else(|| url.clone());
         self.log(format!(
-            "在线规则已同步（{} 条，经{via}，来自 {url}）：白名单 +{} / 黑名单 +{}",
-            rules.total(),
+            "在线规则已更新：白名单 {} 条、黑名单 {} 条，来自 {from}（{via}）",
             rules.proxy.len(),
             rules.direct.len()
         ));
@@ -379,36 +383,22 @@ impl Core {
     }
 
     /// 定期同步：按 `online_interval_hours` 排一次，0 表示不自动同步。
+    ///
+    /// 启动时**不会**无条件同步：只有「一次都没同步过」或「距上次同步已超过间隔」才拉一次。
+    /// 刚更新过就重开程序既不重复下载，也不该在日志里假装又要同步一遍。
     fn start_online_timer(self: &Arc<Self>) {
         let mut guard = self.online_timer.lock();
         if guard.is_some() {
             return;
         }
         let core = self.clone();
-        // Core::new 是同步构造、跑在主线程上，此时还没有 Tokio reactor，	okio::spawn 会 panic；
+        // Core::new 是同步构造、跑在主线程上，此时还没有 Tokio reactor，tokio::spawn 会 panic；
         // tauri::async_runtime 有全局运行时，从任何线程调都安全。
         *guard = Some(tauri::async_runtime::spawn(async move {
-            // 等界面和核心起来就行，不用拖太久：新装用户靠这一步拿到第一份公共规则
-            // （内置了默认规则地址，所以这就是「开箱即有规则」）
+            // 先等界面和核心起来再判断，省得跟启动阶段抢带宽
             tokio::time::sleep(std::time::Duration::from_secs(FIRST_SYNC_DELAY_SECS)).await;
-            {
-                let (hours, n) = {
-                    let cfg = core.cfg.lock();
-                    (cfg.online_interval_hours, cfg.online_urls_clean().len())
-                };
-                if hours > 0 && n > 0 {
-                    let every = if hours == 24 {
-                        "每 24 小时".to_string()
-                    } else if hours % 24 == 0 {
-                        format!("每 {} 天", hours / 24)
-                    } else {
-                        format!("每 {hours} 小时")
-                    };
-                    core.log(format!(
-                        "在线规则：启动 {FIRST_SYNC_DELAY_SECS} 秒后自动同步一次，之后{every}一次（订阅了 {n} 个地址，可在「在线规则…」里改）"
-                    ));
-                }
-            }
+            // 排期只在启动后说一次，免得每轮都刷
+            let mut announced = false;
             loop {
                 let (hours, urls) = {
                     let cfg = core.cfg.lock();
@@ -418,15 +408,24 @@ impl Core {
                     tokio::time::sleep(std::time::Duration::from_secs(10 * 60)).await;
                     continue;
                 }
-                let due = {
-                    let cfg = core.cfg.lock();
-                    cfg.online_synced_at + hours * 3600
-                };
-                if now_secs() >= due {
-                    // 自动同步按时间到点就跑，不强制覆盖：远端版本比本地旧时宁可留着旧的
+                let last = core.cfg.lock().online_synced_at;
+                let now = now_secs();
+                let due = last.saturating_add(hours * 3600);
+                if now >= due {
+                    // 到点了就直接拉；结果自己会记一条日志，不用在这里预告
                     if let Err(e) = core.sync_online_rules(false).await {
-                        core.log(format!("自动同步在线规则失败：{e}"));
+                        core.log(format!("在线规则更新失败（沿用现有规则）：{e}"));
                     }
+                    // 刚同步完就别再补一句排期（否则 10 分钟后会冒出一条「下次在 24 小时后」）
+                    announced = true;
+                } else if !announced {
+                    announced = true;
+                    let left = human_span(due as i64 - now as i64);
+                    core.log(format!(
+                        "在线规则：每 {}更新一次，下次在 {left}后（订阅了 {} 个地址）",
+                        every_text(hours),
+                        urls.len()
+                    ));
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(10 * 60)).await;
             }
@@ -496,7 +495,7 @@ impl Core {
             }
         }
         if !self.session.logged_in() {
-            self.log("没有会话，正在登录…");
+            self.log("尚未登录，正在登录…");
             let ticket = self.session.login().await?;
             self.log(format!("登录成功（票据 {}…）", &ticket.chars().take(6).collect::<String>()));
         } else {
@@ -505,7 +504,7 @@ impl Core {
             // 重登不成功就把核心拦下来（错误会带回界面，弹出失败原因）。
             match self.session.verify().await {
                 Ok(t) => self.log(format!(
-                    "会话可用（票据 {}…），启动核心",
+                    "登录状态有效（票据 {}…），启动核心",
                     &t.chars().take(6).collect::<String>()
                 )),
                 Err(e) => {
@@ -533,7 +532,7 @@ impl Core {
             cfg.proxy_port = actual;
             cfg.save(&self.paths);
         }
-        self.log(format!("本地代理已启动 127.0.0.1:{actual}"));
+        self.log(format!("核心已启动，本地代理 127.0.0.1:{actual}"));
         self.start_keepalive();
         Ok((true, actual))
     }
@@ -544,20 +543,20 @@ impl Core {
         let ours = format!("127.0.0.1:{}", self.proxy_port());
         if sys.auto_config_url.contains("127.0.0.1") {
             match sysproxy::disable(&self.paths) {
-                Ok(_) => self.log("系统代理（PAC）已还原：核心已停止"),
+                Ok(_) => self.log("系统代理已还原（核心已停止）"),
                 Err(e) => self.log(format!("还原系统代理失败：{e}")),
             }
             self.invalidate_sys_cache();
         } else if sys.enabled && sys.server == ours {
             match sysproxy::disable(&self.paths) {
-                Ok(_) => self.log("系统代理已还原：核心已停止"),
+                Ok(_) => self.log("系统代理已还原（核心已停止）"),
                 Err(e) => self.log(format!("还原系统代理失败：{e}")),
             }
             self.invalidate_sys_cache();
         }
         if let Some(p) = self.proxy.lock().take() {
             self.log(format!(
-                "代理统计 school={} direct={} rewrites={} errors={}",
+                "本次代理统计：经 WebVPN {} · 直连 {} · 链接改写 {} · 出错 {}",
                 p.stats.school.load(Ordering::Relaxed),
                 p.stats.direct.load(Ordering::Relaxed),
                 p.stats.rewrites.load(Ordering::Relaxed),
@@ -673,7 +672,7 @@ impl Core {
         if !ok {
             return Err("根证书写入后校验失败（可能被安全软件还原）".into());
         }
-        self.log("根证书已装入当前用户（CN=SDUST WebVPN Local CA）");
+        self.log("根证书已装好（当前用户，CN=SDUST WebVPN Local CA）");
         self.invalidate_ca_cache();
         Ok(json!({ "installed": true, "path": self.ca.cert_file().to_string_lossy() }))
     }
@@ -687,7 +686,7 @@ impl Core {
         if removed == 0 && certstore::has_root(&thumb) {
             return Err("删除根证书失败：证书仍在证书库中".into());
         }
-        self.log(format!("根证书已卸载（删除 {removed} 个）"));
+        self.log(format!("根证书已移除（删掉 {removed} 个）"));
         self.invalidate_ca_cache();
         Ok(json!({ "installed": false }))
     }
@@ -801,7 +800,7 @@ impl Core {
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(|e| format!("控制端口 {CONTROL_PORT} 绑定失败：{e}"))?;
-        self.log(format!("控制接口 http://127.0.0.1:{CONTROL_PORT}"));
+        self.log(format!("本地控制接口：http://127.0.0.1:{CONTROL_PORT}"));
         axum::serve(listener, app)
             .await
             .map_err(|e| format!("控制接口退出：{e}"))
@@ -859,6 +858,66 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// 把秒数说成人话：「25 秒」「7 分钟」「3 小时」「2 天」。
+/// 日志里出现 `86400` 这种数字没人愿意换算，四舍五入到最接近的单位就够了。
+fn human_span(secs: i64) -> String {
+    let s = secs.max(0);
+    if s < 60 {
+        return format!("{s} 秒");
+    }
+    // 先四舍五入再判断进位，否则会出现「60 分钟」「24 小时」这种该往上进一位的写法
+    let minutes = (s + 30) / 60;
+    if minutes < 60 {
+        return format!("{minutes} 分钟");
+    }
+    let hours = (s + 1800) / 3600;
+    // 48 小时以内仍按小时说，跟「每 24 小时更新一次」的写法对上
+    if hours < 48 {
+        return format!("{hours} 小时");
+    }
+    format!("{} 天", (s + 43_200) / 86_400)
+}
+
+/// 同步间隔的口语化写法：24 → 「24 小时」，72 → 「3 天」。
+fn every_text(hours: u64) -> String {
+    if hours % 24 == 0 {
+        let days = hours / 24;
+        if days <= 1 {
+            "24 小时".to_string()
+        } else {
+            format!("{days} 天")
+        }
+    } else {
+        format!("{hours} 小时")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{every_text, human_span};
+
+    #[test]
+    fn human_span_picks_a_readable_unit() {
+        assert_eq!(human_span(0), "0 秒");
+        assert_eq!(human_span(45), "45 秒");
+        assert_eq!(human_span(90), "2 分钟");
+        assert_eq!(human_span(3599), "1 小时");
+        assert_eq!(human_span(3600), "1 小时");
+        assert_eq!(human_span(86_400), "24 小时");
+        assert_eq!(human_span(172_800), "2 天");
+        // 负数（时钟被调过）不该输出「-3 分钟」这种吓人的东西
+        assert_eq!(human_span(-600), "0 秒");
+    }
+
+    #[test]
+    fn every_text_uses_days_for_whole_days() {
+        assert_eq!(every_text(24), "24 小时");
+        assert_eq!(every_text(6), "6 小时");
+        assert_eq!(every_text(48), "2 天");
+        assert_eq!(every_text(168), "7 天");
+    }
 }
 
 /// 接受数组或「换行/逗号分隔」的字符串；两种键名都认
@@ -959,7 +1018,10 @@ async fn s_root() -> Response {
 async fn s_login(State(core): CoreState) -> Json<serde_json::Value> {
     match core.session.login().await {
         Ok(t) => {
-            core.log("登录成功");
+            core.log(format!(
+                "登录成功，票据 {}…",
+                t.chars().take(6).collect::<String>()
+            ));
             Json(json!({ "ok": true, "ticket": format!("{}…", t.chars().take(6).collect::<String>()) }))
         }
         Err(e) => {
@@ -1047,7 +1109,7 @@ async fn s_proxy_start(State(core): CoreState, body: Bytes) -> Json<serde_json::
     match core.start_proxy(port).await {
         Ok((running, port)) => Json(json!({ "running": running, "port": port })),
         Err(e) => {
-            core.log(format!("启动代理失败：{e}"));
+            core.log(format!("启动核心失败：{e}"));
             Json(json!({ "error": e }))
         }
     }
@@ -1069,6 +1131,10 @@ async fn s_quit() -> Json<serde_json::Value> {
 
 async fn s_config(State(core): CoreState, body: Bytes) -> Json<serde_json::Value> {
     let v = parse_body(&body);
+    // 记下改之前的样子，末尾用来判断「这次到底有没有真的改」——
+    // 界面在同步规则、关引导这些场景也会 POST /config，每次都刷一条「设置已保存」
+    // 只会把真正有用的日志冲走
+    let before = serde_json::to_string(&*core.cfg.lock()).unwrap_or_default();
     let port = v.get("proxyPort").and_then(|x| x.as_u64()).map(|x| x as u16);
     let new_mode = v.get("sysproxyMode").and_then(|x| x.as_str()).map(|m| m.to_string());
     if let Some(m) = &new_mode {
@@ -1157,15 +1223,15 @@ async fn s_config(State(core): CoreState, body: Bytes) -> Json<serde_json::Value
                         if was_ours {
                             match core.enable_sysproxy_saved() {
                                 Ok(_) => core
-                                    .log(format!("端口已改为 {p}，核心已重启并重新接管系统代理")),
+                                    .log(format!("代理端口已改为 {p}，核心已重启并重新接管系统代理")),
                                 Err(e) => core
-                                    .log(format!("端口改为 {p} 后重新接管系统代理失败：{e}")),
+                                    .log(format!("代理端口改为 {p} 后重新接管系统代理失败：{e}")),
                             }
                         } else {
-                            core.log(format!("端口已改为 {p}，核心已重启"));
+                            core.log(format!("代理端口已改为 {p}，核心已重启"));
                         }
                     }
-                    Err(e) => core.log(format!("按新端口重启代理失败：{e}")),
+                    Err(e) => core.log(format!("按新端口重启核心失败：{e}")),
                 }
             }
         }
@@ -1193,13 +1259,15 @@ async fn s_config(State(core): CoreState, body: Bytes) -> Json<serde_json::Value
     {
         let cfg = core.cfg.lock();
         cfg.save(&core.paths);
-        core.log(format!(
-            "设置已保存：端口 {}，白名单 {} 条，黑名单 {} 条，系统代理 {}",
-            cfg.proxy_port,
-            cfg.proxy_hosts.len(),
-            cfg.direct_hosts.len(),
-            if cfg.sysproxy_mode == "pac" { "PAC" } else { "全局" }
-        ));
+        if serde_json::to_string(&*cfg).unwrap_or_default() != before {
+            core.log(format!(
+                "设置已保存：代理端口 {} · 白名单 {} 条 · 黑名单 {} 条 · 系统代理 {} 模式",
+                cfg.proxy_port,
+                cfg.proxy_hosts.len(),
+                cfg.direct_hosts.len(),
+                if cfg.sysproxy_mode == "pac" { "PAC" } else { "全局" }
+            ));
+        }
     }
     Json(json!({
         "proxyPort": core.proxy_port(),
@@ -1270,7 +1338,7 @@ async fn s_sysproxy(State(core): CoreState, body: Bytes) -> Json<serde_json::Val
         "pac" => {
             core.cfg.lock().sysproxy_mode = "pac".into();
             sysproxy::enable_pac_saved(&core.paths, &core.pac_url())
-            .map(|_| core.log("系统代理已切到 PAC 模式"))
+            .map(|_| core.log("系统代理已切换为 PAC 模式"))
         }
         _ => {
             core.cfg.lock().sysproxy_mode = "global".into();
@@ -1296,7 +1364,7 @@ async fn s_sysproxy(State(core): CoreState, body: Bytes) -> Json<serde_json::Val
                 }
                 core.cfg.lock().env_proxy = want_env;
             }
-            r.map(|_| core.log("系统代理已指向本地代理"))
+            r.map(|_| core.log("系统代理已切换为全局模式"))
         }
     };
     // 模式切换会改变"谁能走 WebVPN"的判定（全局=忽略名单），立刻生效
@@ -1325,9 +1393,9 @@ async fn s_envproxy(State(core): CoreState, body: Bytes) -> Json<serde_json::Val
             &format!("127.0.0.1:{}", core.proxy_port()),
             "localhost,127.0.0.1,::1",
         )
-        .map(|_| core.log("用户环境变量代理已设置"))
+        .map(|_| core.log("命令行代理环境变量已设置为 127.0.0.1 本地代理"))
     } else {
-        sysproxy::unset_user_env_proxy().map(|_| core.log("用户环境变量代理已清除"))
+        sysproxy::unset_user_env_proxy().map(|_| core.log("命令行代理环境变量已清除"))
     };
     match r {
         Ok(_) => Json(json!({ "ok": true })),

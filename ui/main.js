@@ -625,9 +625,17 @@ async function refresh() {
 }
 
 /* ---------- 日志 ---------- */
+// 后端写的是 RFC3339 的 UTC 时间（日志文件里也需要它不带歧义），
+// 面板上要显示本机时间——之前直接切字符串，整片日志都偏了 8 小时。
+function logClock(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return '--:--:--';
+  return d.toLocaleTimeString('zh-CN', { hour12: false });
+}
+
 function appendLog(line) {
   const el = $('log');
-  const t = String(line.t || '').replace('T', ' ').slice(11, 19);
+  const t = logClock(line.t);
   const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
   el.textContent += `${t}  ${line.msg}\n`;
   // 只保留最近 400 行，避免文本无限增长
